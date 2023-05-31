@@ -254,6 +254,10 @@ pub fn ecrecover_inner(
     digest: [u8; 32],
     serialized_signature: Vec<u8>,
 ) -> Result<VerifyingKey, ()> {
+    if digest.iter().all(|el| *el == 0) {
+        // zero hash is not supported by our convension
+        return Err(());
+    }
     // we expect pre-validation, so this check always works
     let sig =
         k256::ecdsa::recoverable::Signature::try_from(&serialized_signature[..]).map_err(|_| ())?;

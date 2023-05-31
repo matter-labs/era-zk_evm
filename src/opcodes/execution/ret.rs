@@ -83,9 +83,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             }
             // our formal definition of "in bounds" is strictly "less than", but we want to allow to return
             // "trivial" pointer, like `ret.ok r0`
-            if memory_quasi_fat_pointer.validate_in_bounds() == false
-                && memory_quasi_fat_pointer.is_trivial() == false
-            {
+            // this captures the case of empty slice
+            if memory_quasi_fat_pointer.validate_as_slice() == false {
                 inner_variant = RetOpcode::Panic;
             }
 
@@ -97,94 +96,96 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         let mut ergs_remaining = current_callstack.ergs_remaining;
 
         // now we are all good to form a new fat pointer for
-        let fat_ptr_for_returndata = match (current_callstack.is_local_frame, inner_variant) {
-            (true, _) => {
-                // we do nothing with it later on, so it's empty placeholder
-                None
-            }
-            (false, RetOpcode::Ok) | (false, RetOpcode::Revert) => {
-                match page_forwarding_mode {
-                    RetForwardPageType::ForwardFatPointer => {
-                        // We can formally shrink the pointer
-                        // If it was malformed then we masked and overflows can not happen
-                        let new_start = memory_quasi_fat_pointer
-                            .start
-                            .wrapping_add(memory_quasi_fat_pointer.offset);
-                        let new_length = memory_quasi_fat_pointer
-                            .length
-                            .wrapping_sub(memory_quasi_fat_pointer.offset);
-
-                        memory_quasi_fat_pointer.start = new_start;
-                        memory_quasi_fat_pointer.length = new_length;
-                    }
-                    RetForwardPageType::UseHeap => {
-                        let owned_page = CallStackEntry::<N, E>::heap_page_from_base(
-                            current_callstack.base_memory_page,
-                        )
-                        .0;
-
-                        memory_quasi_fat_pointer.memory_page = owned_page;
-                    }
-                    RetForwardPageType::UseAuxHeap => {
-                        let owned_page = CallStackEntry::<N, E>::aux_heap_page_from_base(
-                            current_callstack.base_memory_page,
-                        )
-                        .0;
-
-                        memory_quasi_fat_pointer.memory_page = owned_page;
-                    }
-                }
-
-                // potentially pay for memory growth
-                let memory_growth_in_bytes = match page_forwarding_mode {
-                    a @ RetForwardPageType::UseHeap | a @ RetForwardPageType::UseAuxHeap => {
-                        // pointer is already validated, so we do not need to check that start + length do not overflow
-                        let mut upper_bound =
-                            memory_quasi_fat_pointer.start + memory_quasi_fat_pointer.length;
-
-                        let penalize_out_of_bounds_growth = pointer_validation_exceptions
-                            .contains(FatPointerValidationException::DEREF_BEYOND_HEAP_RANGE);
-                        if penalize_out_of_bounds_growth {
-                            upper_bound = u32::MAX;
+        let fat_ptr_for_returndata = if current_callstack.is_local_frame == true {
+            None
+        } else {
+            match inner_variant {
+                RetOpcode::Ok |  RetOpcode::Revert => {
+                    match page_forwarding_mode {
+                        RetForwardPageType::ForwardFatPointer => {
+                            // We can formally shrink the pointer
+                            // If it was malformed then we masked and overflows can not happen
+                            let new_start = memory_quasi_fat_pointer
+                                .start
+                                .wrapping_add(memory_quasi_fat_pointer.offset);
+                            let new_length = memory_quasi_fat_pointer
+                                .length
+                                .wrapping_sub(memory_quasi_fat_pointer.offset);
+    
+                            memory_quasi_fat_pointer.start = new_start;
+                            memory_quasi_fat_pointer.length = new_length;
+                            memory_quasi_fat_pointer.offset = 0;
                         }
-
-                        let current_bound = if a == RetForwardPageType::UseHeap {
-                            current_callstack.heap_bound
-                        } else if a == RetForwardPageType::UseAuxHeap {
-                            current_callstack.aux_heap_bound
-                        } else {
-                            unreachable!();
-                        };
-                        let (mut diff, uf) = upper_bound.overflowing_sub(current_bound);
-                        if uf {
-                            // heap bound is already beyond what we pass
-                            diff = 0u32;
-                        } else {
-                            // we do not need to do anything with the frame that goes out of scope
-                        };
-
-                        diff
+                        RetForwardPageType::UseHeap => {
+                            let owned_page = CallStackEntry::<N, E>::heap_page_from_base(
+                                current_callstack.base_memory_page,
+                            )
+                            .0;
+    
+                            memory_quasi_fat_pointer.memory_page = owned_page;
+                        }
+                        RetForwardPageType::UseAuxHeap => {
+                            let owned_page = CallStackEntry::<N, E>::aux_heap_page_from_base(
+                                current_callstack.base_memory_page,
+                            )
+                            .0;
+    
+                            memory_quasi_fat_pointer.memory_page = owned_page;
+                        }
                     }
-                    RetForwardPageType::ForwardFatPointer => 0u32,
-                };
-
-                // MEMORY_GROWTH_ERGS_PER_BYTE is always 1
-                let cost_of_memory_growth = memory_growth_in_bytes
-                    .wrapping_mul(zkevm_opcode_defs::MEMORY_GROWTH_ERGS_PER_BYTE);
-                if ergs_remaining >= cost_of_memory_growth {
-                    ergs_remaining -= cost_of_memory_growth;
-                } else {
-                    ergs_remaining = 0;
-                    inner_variant = RetOpcode::Panic;
+                },
+                RetOpcode::Panic => {
                     memory_quasi_fat_pointer = FatPointer::empty();
-                };
-
-                // we do nothing with it later on, so just keep returndata page, and set zeroes for other
-                Some(memory_quasi_fat_pointer)
+                }
             }
-            (false, RetOpcode::Panic) => Some(FatPointer::empty()),
-        };
 
+            // potentially pay for memory growth
+            let memory_growth_in_bytes = match page_forwarding_mode {
+                a @ RetForwardPageType::UseHeap | a @ RetForwardPageType::UseAuxHeap => {
+                    // pointer is already validated, so we do not need to check that start + length do not overflow
+                    let mut upper_bound =
+                        memory_quasi_fat_pointer.start + memory_quasi_fat_pointer.length;
+
+                    let penalize_out_of_bounds_growth = pointer_validation_exceptions
+                        .contains(FatPointerValidationException::DEREF_BEYOND_HEAP_RANGE);
+                    if penalize_out_of_bounds_growth {
+                        upper_bound = u32::MAX;
+                    }
+
+                    let current_bound = if a == RetForwardPageType::UseHeap {
+                        current_callstack.heap_bound
+                    } else if a == RetForwardPageType::UseAuxHeap {
+                        current_callstack.aux_heap_bound
+                    } else {
+                        unreachable!();
+                    };
+                    let (mut diff, uf) = upper_bound.overflowing_sub(current_bound);
+                    if uf {
+                        // heap bound is already beyond what we pass
+                        diff = 0u32;
+                    } else {
+                        // we do not need to do anything with the frame that goes out of scope
+                    };
+
+                    diff
+                }
+                RetForwardPageType::ForwardFatPointer => 0u32,
+            };
+
+            // MEMORY_GROWTH_ERGS_PER_BYTE is always 1
+            let cost_of_memory_growth = memory_growth_in_bytes
+                .wrapping_mul(zkevm_opcode_defs::MEMORY_GROWTH_ERGS_PER_BYTE);
+            if ergs_remaining >= cost_of_memory_growth {
+                ergs_remaining -= cost_of_memory_growth;
+            } else {
+                ergs_remaining = 0;
+                inner_variant = RetOpcode::Panic;
+                memory_quasi_fat_pointer = FatPointer::empty();
+            };
+
+            // we do nothing with it later on, so just keep returndata page, and set zeroes for other
+            Some(memory_quasi_fat_pointer)
+        };
         drop(current_callstack);
 
         // done with exceptions, so we can pop the callstack entry

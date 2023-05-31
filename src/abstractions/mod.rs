@@ -6,12 +6,8 @@ pub mod tracing;
 pub use self::tracing::*;
 
 pub const MEMORY_CELLS_STACK_OR_CODE_PAGE: usize = 1 << 16;
-pub const MAX_MEMORY_BYTES: usize = 1 << 24;
-pub const MEMORY_CELLS_OTHER_PAGES: usize = MAX_MEMORY_BYTES / 32;
-
 pub const MAX_STACK_PAGE_SIZE_IN_WORDS: usize = 1 << 16;
 pub const MAX_CODE_PAGE_SIZE_IN_WORDS: usize = 1 << 16;
-pub const MAX_HEAP_PAGE_SIZE_IN_WORDS: usize = MAX_MEMORY_BYTES / 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MemoryType {
@@ -27,7 +23,7 @@ impl MemoryType {
         match self {
             MemoryType::Stack | MemoryType::Code => MEMORY_CELLS_STACK_OR_CODE_PAGE,
             MemoryType::Heap | MemoryType::AuxHeap | MemoryType::FatPointer => {
-                MEMORY_CELLS_OTHER_PAGES
+                u32::MAX as usize
             }
         }
     }

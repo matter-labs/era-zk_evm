@@ -112,8 +112,12 @@ pub fn read_and_decode<
         // simultaneously finish the execution
         assert!(local_state.execution_has_ended() == false);
 
-        // so we can just remove the marker as soon as we are no longer pending
+        // note that we do reset PC in VM for simplicity, so we do it here too
+        let pc = local_state.callstack.get_current_stack().pc;
+        let (super_pc, _) = E::split_pc(pc);
+        delayed_changes.new_previous_super_pc = Some(super_pc);
 
+        // so we can just remove the marker as soon as we are no longer pending
         delayed_changes.new_pending_exception = Some(false);
 
         E::exception_revert_encoding()
@@ -186,7 +190,8 @@ pub fn read_and_decode<
     }
 
     // now we have enough information to decide whether to mask the opcode into "panic" or not
-    if !error_flags.is_empty() {
+    let mask_into_panic_due_to_exception = error_flags.is_empty() == false;
+    if mask_into_panic_due_to_exception {
         partially_decoded.mask_into_panic();
     };
 
@@ -210,8 +215,11 @@ pub fn read_and_decode<
     };
 
     // mask into NOP if condition doesn't match. Note that encoding for PANIC has "always" condition
-    if !resolved_condition {
-        partially_decoded.mask_into_nop();
+    if resolved_condition == false {
+        // we self-protect against double-masking
+        if mask_into_panic_due_to_exception == false {
+            partially_decoded.mask_into_nop();
+        }
     }
 
     if DT::CALL_AFTER_DECODING {
