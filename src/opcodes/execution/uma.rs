@@ -1,4 +1,5 @@
-use crate::abstractions::MemoryType;
+use zk_evm_abstractions::aux::*;
+use zk_evm_abstractions::vm::MemoryType;
 
 use super::*;
 use zkevm_opcode_defs::{FatPointer, Opcode, UMAOpcode, UMA_INCREMENT_FLAG_IDX};
@@ -24,11 +25,11 @@ bitflags! {
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn uma_opcode_apply<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
@@ -261,17 +262,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         };
 
         let word_0_read_value = if skip_memory_access == false {
-            let word_0_query = vm_state.read_memory(
-                vm_state.local_state.monotonic_cycle_counter,
-                key_0,
-                /* is_pended */ false,
-            );
-            vm_state.witness_tracer.add_sponge_marker(
-                vm_state.local_state.monotonic_cycle_counter,
-                SpongeExecutionMarker::MemoryQuery,
-                1..2,
-                /* is_pended */ false,
-            );
+            let word_0_query =
+                vm_state.read_memory(vm_state.local_state.monotonic_cycle_counter, key_0);
 
             let word_0_read_value = word_0_query.value;
 
@@ -286,18 +278,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 timestamp: timestamp_to_read,
             };
 
-            let word_1_query = vm_state.read_memory(
-                vm_state.local_state.monotonic_cycle_counter,
-                key_1,
-                /* is_pended */ true,
-            );
-
-            vm_state.witness_tracer.add_sponge_marker(
-                vm_state.local_state.monotonic_cycle_counter,
-                SpongeExecutionMarker::MemoryQuery,
-                3..4,
-                /* is_pended */ true,
-            );
+            let word_1_query =
+                vm_state.read_memory(vm_state.local_state.monotonic_cycle_counter, key_1);
 
             word_1_query.value
         } else {
@@ -393,16 +375,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                         vm_state.local_state.monotonic_cycle_counter,
                         key_0,
                         new_word_0_value,
-                        /* is_pended */ false,
                     );
                 }
-
-                vm_state.witness_tracer.add_sponge_marker(
-                    vm_state.local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::MemoryQuery,
-                    2..3,
-                    /* is_pended */ false,
-                );
 
                 // may be write word 1
                 if is_unaligned && skip_memory_access == false {
@@ -421,17 +395,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                         vm_state.local_state.monotonic_cycle_counter,
                         key_1,
                         new_word_1_value,
-                        /* is_pended */ true,
                     );
-
-                    vm_state.witness_tracer.add_sponge_marker(
-                        vm_state.local_state.monotonic_cycle_counter,
-                        SpongeExecutionMarker::MemoryQuery,
-                        4..5,
-                        /* is_pended */ true,
-                    );
-
-                    vm_state.local_state.pending_port.pending_type = Some(PendingType::UMAWrite);
                 }
 
                 if set_panic == false {

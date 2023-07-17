@@ -1,8 +1,8 @@
 use super::*;
-use crate::abstractions::*;
-use crate::aux_structures::MemoryIndex;
-use crate::aux_structures::{MemoryKey, MemoryLocation};
+
 use crate::opcodes::parsing::*;
+use tracing::*;
+use zk_evm_abstractions::{aux::*, vm::MemoryType};
 use zkevm_opcode_defs::{ImmMemHandlerFlags, NopOpcode, Operand, RegOrImmFlags};
 
 pub struct PreState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
@@ -15,16 +15,13 @@ pub struct PreState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProdu
 
 pub const OPCODES_PER_WORD_LOG_2: usize = 2;
 pub const OPCODES_PER_WORD: usize = 1 << OPCODES_PER_WORD_LOG_2;
-pub const READ_OPCODE_SPONGE_IDX: usize = 0;
-pub const READ_SRC_FROM_MEMORY_SPONGE_IDX: usize = 1;
-pub const READ_DST_FROM_MEMORY_SPONGE_IDX: usize = 2;
 
 pub fn read_and_decode<
     const N: usize,
     E: VmEncodingMode<N>,
-    M: crate::abstractions::Memory,
+    M: zk_evm_abstractions::vm::Memory,
     WT: crate::witness_trace::VmWitnessTracer<N, E>,
-    DT: crate::abstractions::tracing::Tracer<N, E, SupportedMemory = M>,
+    DT: crate::tracing::Tracer<N, E, SupportedMemory = M>,
 >(
     local_state: &VmLocalState<N, E>,
     memory: &M,
@@ -45,18 +42,21 @@ pub fn read_and_decode<
         tracer.before_decoding(local_state, memory);
     }
 
-    let skip_cycle = local_state.pending_port.is_any_pending() || local_state.execution_has_ended();
-    delayed_changes.reset_pending_port = local_state.pending_port.is_any_pending();
-
+    let execution_has_ended = local_state.execution_has_ended();
     let pending_exception = local_state.pending_exception;
 
+    let code_page = local_state.callstack.get_current_stack().code_page;
+    delayed_changes.new_previous_code_memory_page = Some(code_page);
+
+    let pc = local_state.callstack.get_current_stack().pc;
+    let previous_super_pc = local_state.previous_super_pc;
+    let code_pages_are_different = local_state.callstack.get_current_stack().code_page
+        != local_state.previous_code_memory_page;
+    let (super_pc, sub_pc) = E::split_pc(pc);
+
     // if we do not skip cycle then we read memory for a new opcode
-    let opcode_encoding = if !skip_cycle && !pending_exception {
-        let pc = local_state.callstack.get_current_stack().pc;
-        let previous_super_pc = local_state.previous_super_pc;
-        let did_call_or_ret_recently = local_state.did_call_or_ret_recently;
-        let (super_pc, sub_pc) = E::split_pc(pc);
-        let raw_opcode_u64 = match (did_call_or_ret_recently, previous_super_pc == super_pc) {
+    let opcode_encoding = if execution_has_ended == false && pending_exception == false {
+        let raw_opcode_u64 = match (code_pages_are_different, previous_super_pc == super_pc) {
             (true, _) | (false, false) => {
                 // we need to read the code word and select a proper subword
                 let code_page = local_state.callstack.get_current_stack().code_page;
@@ -69,7 +69,8 @@ pub fn read_and_decode<
                     timestamp: local_state.timestamp_for_code_or_src_read(),
                     location,
                 };
-                delayed_changes.reset_did_call_or_ret_recently = true;
+
+                delayed_changes.new_previous_code_memory_page = Some(code_page);
 
                 // code read is never pending
                 let code_query = read_code(
@@ -77,13 +78,6 @@ pub fn read_and_decode<
                     witness_tracer,
                     local_state.monotonic_cycle_counter,
                     key,
-                    /* is_pended */ false,
-                );
-                witness_tracer.add_sponge_marker(
-                    local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::MemoryQuery,
-                    0..1,
-                    /* is_pended */ false,
                 );
                 let u256_word = code_query.value;
                 delayed_changes.new_previous_code_word = Some(u256_word);
@@ -107,31 +101,32 @@ pub fn read_and_decode<
         };
 
         raw_opcode_u64
-    } else if !skip_cycle && pending_exception {
+    } else if pending_exception {
         // there are no cases that set pending exception and
         // simultaneously finish the execution
-        assert!(local_state.execution_has_ended() == false);
-
-        // note that we do reset PC in VM for simplicity, so we do it here too
-        let pc = local_state.callstack.get_current_stack().pc;
-        let (super_pc, _) = E::split_pc(pc);
-        delayed_changes.new_previous_super_pc = Some(super_pc);
+        assert!(execution_has_ended == false);
 
         // so we can just remove the marker as soon as we are no longer pending
         delayed_changes.new_pending_exception = Some(false);
+
+        // anyway update super PC
+        delayed_changes.new_previous_super_pc = Some(super_pc);
 
         E::exception_revert_encoding()
     } else {
         // we are skipping cycle for some reason, so we do nothing,
         // and do not touch any flags
 
+        // This only happens at the end of execution
+
         if local_state.execution_has_ended() {
             assert!(pending_exception == false);
-            delayed_changes.reset_did_call_or_ret_recently = true;
         }
 
         E::nop_encoding()
     };
+
+    let skip_cycle = execution_has_ended;
 
     // now we have some candidate for opcode. If it's noop we are not expecting to have any problems,
     // so check for other meaningful exceptions
@@ -155,7 +150,6 @@ pub fn read_and_decode<
         // we have already paid for it
         ergs_cost = 0;
     }
-
     let (mut ergs_remaining, not_enough_power) = local_state
         .callstack
         .get_current_stack()
@@ -232,7 +226,7 @@ pub fn read_and_decode<
             opcode_masked: partially_decoded,
             error_flags_accumulated: error_flags,
             resolved_condition,
-            did_skip_cycle: skip_cycle,
+            did_skip_cycle: false,
         };
 
         tracer.after_decoding(local_state, data, memory);
@@ -243,11 +237,11 @@ pub fn read_and_decode<
 
 impl<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
@@ -261,10 +255,10 @@ impl<
         )
     }
 
-    pub fn cycle<DT: crate::abstractions::tracing::Tracer<N, E, SupportedMemory = M>>(
+    pub fn cycle<DT: tracing::Tracer<N, E, SupportedMemory = M>>(
         &mut self,
         tracer: &mut DT,
-    ) {
+    ) -> anyhow::Result<()> {
         let (after_masking_decoded, delayed_changes, skip_cycle) =
             read_and_decode(&self.local_state, self.memory, self.witness_tracer, tracer);
         delayed_changes.apply(&mut self.local_state);
@@ -312,24 +306,10 @@ impl<
             // src read is never pending, but to keep consistent memory implementation we
             // need to branch here for a case of loading constants from code space
             let src0_query = if src0_mem_location.memory_type == MemoryType::Code {
-                self.read_code(
-                    self.local_state.monotonic_cycle_counter,
-                    key,
-                    /* is_pended */ false,
-                )
+                self.read_code(self.local_state.monotonic_cycle_counter, key)
             } else {
-                self.read_memory(
-                    self.local_state.monotonic_cycle_counter,
-                    key,
-                    /* is_pended */ false,
-                )
+                self.read_memory(self.local_state.monotonic_cycle_counter, key)
             };
-            self.witness_tracer.add_sponge_marker(
-                self.local_state.monotonic_cycle_counter,
-                SpongeExecutionMarker::MemoryQuery,
-                1..2,
-                /* is_pended */ false,
-            );
             let u256_word = src0_query.value;
             let is_pointer = src0_query.value_is_pointer;
 
@@ -396,11 +376,7 @@ impl<
             is_kernel_mode,
         };
 
-        after_masking_decoded.apply(self, prestate);
-
-        if self.local_state.pending_port.is_any_pending() {
-            debug_assert!(self.local_state.pending_cycles_left.is_none());
-        }
+        after_masking_decoded.apply(self, prestate)?;
 
         if !skip_cycle {
             self.increment_timestamp_after_cycle();
@@ -421,5 +397,7 @@ impl<
 
             tracer.after_execution(local_state, data, self.memory);
         }
+
+        Ok(())
     }
 }

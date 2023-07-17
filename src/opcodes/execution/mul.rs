@@ -3,11 +3,11 @@ use super::*;
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn mul_opcode_apply<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
@@ -29,6 +29,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             value: src1,
             is_pointer: _,
         } = src1;
+
+        use zkevm_opcode_defs::SET_FLAGS_FLAG_IDX;
         let set_flags = self.variant.flags[SET_FLAGS_FLAG_IDX];
         vm_state.local_state.callstack.get_current_stack_mut().pc = new_pc;
         let tmp = src0.full_mul(src1).0;

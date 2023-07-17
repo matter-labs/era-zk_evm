@@ -5,11 +5,11 @@ use super::*;
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn near_call_opcode_apply<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
@@ -66,11 +66,5 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         // perform some extra steps to ensure that our rollbacks are properly written and saved
         // both in storage and for witness
         vm_state.start_frame(vm_state.local_state.monotonic_cycle_counter, new_stack);
-        vm_state.witness_tracer.add_sponge_marker(
-            vm_state.local_state.monotonic_cycle_counter,
-            SpongeExecutionMarker::CallstackPush,
-            1..4,
-            false,
-        );
     }
 }

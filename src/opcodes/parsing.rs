@@ -46,20 +46,20 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
     pub fn apply<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
         vm_state: &mut VmState<'a, S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
-    ) {
+    ) -> anyhow::Result<()> {
         use zkevm_opcode_defs::Opcode;
 
-        match self.inner.variant.opcode {
+        Ok(match self.inner.variant.opcode {
             Opcode::Nop(_) => self.noop_opcode_apply(vm_state, prestate),
             Opcode::Add(_) => self.add_opcode_apply(vm_state, prestate),
             Opcode::Sub(_) => self.sub_opcode_apply(vm_state, prestate),
@@ -72,10 +72,10 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             Opcode::Ptr(_) => self.ptr_opcode_apply(vm_state, prestate),
             Opcode::Log(_) => self.log_opcode_apply(vm_state, prestate),
             Opcode::NearCall(_) => self.near_call_opcode_apply(vm_state, prestate),
-            Opcode::FarCall(_) => self.far_call_opcode_apply(vm_state, prestate),
+            Opcode::FarCall(_) => self.far_call_opcode_apply(vm_state, prestate)?,
             Opcode::Ret(_) => self.ret_opcode_apply(vm_state, prestate),
             Opcode::UMA(_) => self.uma_opcode_apply(vm_state, prestate),
             Opcode::Invalid(_) => unreachable!(),
-        }
+        })
     }
 }

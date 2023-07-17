@@ -1,26 +1,22 @@
-use super::*;
-use crate::abstractions::RefundType;
-use crate::abstractions::SpongeExecutionMarker;
-use crate::{
-    aux_structures::{
-        DecommittmentQuery, LogQuery, MemoryKey, MemoryLocation, MemoryQuery, Timestamp,
-    },
-    opcodes::parsing::*,
-};
+use crate::opcodes::DecodedOpcode;
 
+use super::*;
+
+use zk_evm_abstractions::aux::{MemoryKey, MemoryLocation};
+use zk_evm_abstractions::queries::{DecommittmentQuery, LogQuery, MemoryQuery};
+use zk_evm_abstractions::vm::RefundType;
 use zkevm_opcode_defs::UNMAPPED_PAGE;
 
 pub fn read_code<
     const N: usize,
     E: VmEncodingMode<N>,
-    M: crate::abstractions::Memory,
+    M: zk_evm_abstractions::vm::Memory,
     WT: crate::witness_trace::VmWitnessTracer<N, E>,
 >(
     memory: &M,
     witness_tracer: &mut WT,
     monotonic_cycle_counter: u32,
     key: MemoryKey,
-    is_pended: bool,
 ) -> MemoryQuery {
     let MemoryKey {
         location,
@@ -33,7 +29,6 @@ pub fn read_code<
         value: U256::zero(),
         value_is_pointer: false,
         rw_flag: false,
-        is_pended,
     };
 
     let query = memory.read_code_query(monotonic_cycle_counter, partial_query);
@@ -46,22 +41,17 @@ pub fn read_code<
 
 impl<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
     > VmState<'a, S, M, EV, PP, DP, WT, N, E>
 {
-    pub fn read_memory(
-        &mut self,
-        monotonic_cycle_counter: u32,
-        key: MemoryKey,
-        is_pended: bool,
-    ) -> MemoryQuery {
+    pub fn read_memory(&mut self, monotonic_cycle_counter: u32, key: MemoryKey) -> MemoryQuery {
         let MemoryKey {
             location,
             timestamp,
@@ -73,7 +63,6 @@ impl<
             value: U256::zero(),
             value_is_pointer: false,
             rw_flag: false,
-            is_pended,
         };
 
         let query = self
@@ -87,18 +76,12 @@ impl<
         query
     }
 
-    pub fn read_code(
-        &mut self,
-        monotonic_cycle_counter: u32,
-        key: MemoryKey,
-        is_pended: bool,
-    ) -> MemoryQuery {
+    pub fn read_code(&mut self, monotonic_cycle_counter: u32, key: MemoryKey) -> MemoryQuery {
         read_code(
             self.memory,
             self.witness_tracer,
             monotonic_cycle_counter,
             key,
-            is_pended,
         )
     }
 
@@ -107,7 +90,6 @@ impl<
         monotonic_cycle_counter: u32,
         key: MemoryKey,
         value: PrimitiveValue,
-        is_pended: bool,
     ) -> MemoryQuery {
         let MemoryKey {
             location,
@@ -122,7 +104,6 @@ impl<
             value,
             value_is_pointer: is_pointer,
             rw_flag: true,
-            is_pended,
         };
 
         let query = self
@@ -187,7 +168,7 @@ impl<
         hash: U256,
         candidate_page: MemoryPage,
         timestamp: Timestamp,
-    ) -> DecommittmentQuery {
+    ) -> anyhow::Result<DecommittmentQuery> {
         let partial_query = DecommittmentQuery {
             hash,
             timestamp,
@@ -200,7 +181,7 @@ impl<
             monotonic_cycle_counter,
             partial_query,
             self.memory,
-        );
+        )?;
 
         if let Some(witness_for_tracer) = witness_for_tracer {
             self.witness_tracer.add_decommittment(
@@ -210,7 +191,7 @@ impl<
             );
         }
 
-        query
+        Ok(query)
     }
 
     pub fn call_precompile(&mut self, monotonic_cycle_counter: u32, query: LogQuery) {
@@ -294,19 +275,7 @@ impl<
                 location,
                 timestamp: self.timestamp_for_dst_write(),
             };
-            let _dst0_query = self.write_memory(
-                monotonic_cycle_counter,
-                key,
-                value,
-                /* is_pended */ false,
-            ); // no pending on dst0 writes
-
-            self.witness_tracer.add_sponge_marker(
-                self.local_state.monotonic_cycle_counter,
-                SpongeExecutionMarker::MemoryQuery,
-                2..3,
-                /* is_pended */ false,
-            );
+            let _dst0_query = self.write_memory(monotonic_cycle_counter, key, value);
         } else {
             self.update_register_value(opcode.dst0_reg_idx, value);
         }

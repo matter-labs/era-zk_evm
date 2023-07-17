@@ -1,3 +1,4 @@
+use zk_evm_abstractions::{aux::MemoryLocation, vm::Memory};
 use zkevm_opcode_defs::decoding::{EncodingModeProduction, VmEncodingMode};
 
 use crate::{
@@ -34,28 +35,6 @@ pub struct BeforeExecutionData<const N: usize = 8, E: VmEncodingMode<N> = Encodi
 pub struct AfterExecutionData<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
     pub opcode: DecodedOpcode<N, E>,
     pub dst0_mem_location: Option<MemoryLocation>,
-}
-
-impl Memory for () {
-    fn execute_partial_query(
-        &mut self,
-        _monotonic_cycle_counter: u32,
-        _query: MemoryQuery,
-    ) -> MemoryQuery {
-        unreachable!()
-    }
-
-    fn specialized_code_query(
-        &mut self,
-        _monotonic_cycle_counter: u32,
-        _query: MemoryQuery,
-    ) -> MemoryQuery {
-        unreachable!()
-    }
-
-    fn read_code_query(&self, _monotonic_cycle_counter: u32, _query: MemoryQuery) -> MemoryQuery {
-        unreachable!()
-    }
 }
 
 pub trait Tracer<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction>:

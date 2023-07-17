@@ -1,5 +1,7 @@
 use super::*;
 
+use zk_evm_abstractions::aux::Timestamp;
+use zk_evm_abstractions::queries::LogQuery;
 use zkevm_opcode_defs::{
     LogOpcode, Opcode, PrecompileCallABI, PrecompileCallInnerABI, FIRST_MESSAGE_FLAG_IDX,
 };
@@ -11,11 +13,11 @@ use zkevm_opcode_defs::system_params::{
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn log_opcode_apply<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
@@ -177,12 +179,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 // we do not expect refunds for reads yet
                 let query = vm_state
                     .access_storage(vm_state.local_state.monotonic_cycle_counter, partial_query);
-                vm_state.witness_tracer.add_sponge_marker(
-                    vm_state.local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::StorageLogReadOnly,
-                    1..4,
-                    false,
-                );
                 let result = PrimitiveValue {
                     value: query.read_value,
                     is_pointer: false,
@@ -219,14 +215,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 // we still do a formal query to execute write and record witness
                 let _query = vm_state
                     .access_storage(vm_state.local_state.monotonic_cycle_counter, partial_query);
-
-                vm_state.witness_tracer.add_sponge_marker(
-                    vm_state.local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::StorageLogWrite,
-                    1..5,
-                    true,
-                );
-                vm_state.local_state.pending_port.pending_type = Some(PendingType::WriteLog);
             }
             variant @ LogOpcode::Event | variant @ LogOpcode::ToL1Message => {
                 if not_enough_power {
@@ -258,13 +246,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     is_service: is_first_message,
                 };
                 vm_state.emit_event(vm_state.local_state.monotonic_cycle_counter, query);
-                vm_state.local_state.pending_port.pending_type = Some(PendingType::WriteLog);
-                vm_state.witness_tracer.add_sponge_marker(
-                    vm_state.local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::StorageLogWrite,
-                    1..5,
-                    true,
-                );
             }
             LogOpcode::PrecompileCall => {
                 // add extra information about precompile abi in the "key" field
@@ -340,12 +321,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     is_service: is_first_message,
                 };
                 vm_state.call_precompile(vm_state.local_state.monotonic_cycle_counter, query);
-                vm_state.witness_tracer.add_sponge_marker(
-                    vm_state.local_state.monotonic_cycle_counter,
-                    SpongeExecutionMarker::StorageLogReadOnly,
-                    1..4,
-                    false,
-                );
                 let result = PrimitiveValue {
                     value: U256::from(1u64),
                     is_pointer: false,

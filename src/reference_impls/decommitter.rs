@@ -1,3 +1,7 @@
+use zk_evm_abstractions::aux::*;
+use zk_evm_abstractions::queries::*;
+use zk_evm_abstractions::vm::*;
+
 use super::*;
 
 pub const MEMORY_CELLS_PER_PAGE: usize = (1 << 16) - 1;
@@ -30,16 +34,16 @@ impl<const B: bool> DecommittmentProcessor for SimpleDecommitter<B> {
         monotonic_cycle_counter: u32,
         mut partial_query: DecommittmentQuery,
         memory: &mut M,
-    ) -> (DecommittmentQuery, Option<Vec<U256>>) {
+    ) -> anyhow::Result<(DecommittmentQuery, Option<Vec<U256>>)> {
         if let Some((old_page, old_len)) = self.history.get(&partial_query.hash).copied() {
             partial_query.is_fresh = false;
             partial_query.memory_page = MemoryPage(old_page);
             partial_query.decommitted_length = old_len;
 
             if B {
-                (partial_query, Some(vec![])) // empty extra data
+                Ok((partial_query, Some(vec![]))) // empty extra data
             } else {
-                (partial_query, None)
+                Ok((partial_query, None))
             }
         } else {
             // fresh one
@@ -47,10 +51,9 @@ impl<const B: bool> DecommittmentProcessor for SimpleDecommitter<B> {
                 .known_hashes
                 .get(&partial_query.hash)
                 .cloned()
-                .expect(&format!(
-                    "Code hash {:?} must be known",
-                    &partial_query.hash
-                ));
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Code hash {:?} must be known", &partial_query.hash)
+                })?;
             let page_to_use = partial_query.memory_page;
             let timestamp = partial_query.timestamp;
             partial_query.decommitted_length = values.len() as u16;
@@ -66,7 +69,6 @@ impl<const B: bool> DecommittmentProcessor for SimpleDecommitter<B> {
                 value: U256::zero(),
                 value_is_pointer: false,
                 rw_flag: true,
-                is_pended: false,
             };
 
             self.history.insert(
@@ -83,7 +85,7 @@ impl<const B: bool> DecommittmentProcessor for SimpleDecommitter<B> {
                     memory.specialized_code_query(monotonic_cycle_counter, tmp_q);
                 }
 
-                (partial_query, Some(values))
+                Ok((partial_query, Some(values)))
             } else {
                 for (i, value) in values.into_iter().enumerate() {
                     tmp_q.location.index = MemoryIndex(i as u32);
@@ -91,7 +93,7 @@ impl<const B: bool> DecommittmentProcessor for SimpleDecommitter<B> {
                     memory.specialized_code_query(monotonic_cycle_counter, tmp_q);
                 }
 
-                (partial_query, None)
+                Ok((partial_query, None))
             }
         }
     }

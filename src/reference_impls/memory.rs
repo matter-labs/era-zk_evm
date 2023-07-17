@@ -3,11 +3,14 @@ use std::{collections::HashSet, hash::BuildHasher};
 
 use crate::vm_state::CallStackEntry;
 use crate::vm_state::PrimitiveValue;
+use zk_evm_abstractions::aux::{MemoryPage, Timestamp};
+use zk_evm_abstractions::queries::MemoryQuery;
+use zk_evm_abstractions::vm::{
+    Memory, MemoryType, MAX_CODE_PAGE_SIZE_IN_WORDS, MAX_STACK_PAGE_SIZE_IN_WORDS,
+};
 use zkevm_opcode_defs::{FatPointer, BOOTLOADER_CALLDATA_PAGE};
 
 use super::*;
-
-const MAX_HEAP_PAGE_SIZE_IN_WORDS: usize = (u16::MAX as usize) / 32;
 
 pub struct ReusablePool<
     T: Sized,
@@ -168,7 +171,7 @@ pub struct SimpleMemory<S: BuildHasher + Default = RandomState> {
 }
 
 fn heap_init() -> Vec<U256> {
-    vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS]
+    vec![U256::zero(); 1 << 10]
 }
 
 fn stack_init() -> Vec<PrimitiveValue> {
@@ -180,13 +183,20 @@ fn heap_on_pull(_el: &mut Vec<U256>) -> () {}
 fn stack_on_pull(_el: &mut Vec<PrimitiveValue>) -> () {}
 
 fn heap_on_return(el: &mut Vec<U256>) -> () {
-    assert_eq!(el.len(), MAX_HEAP_PAGE_SIZE_IN_WORDS);
     el.fill(U256::zero());
 }
 
 fn stack_on_return(el: &mut Vec<PrimitiveValue>) -> () {
     assert_eq!(el.len(), MAX_STACK_PAGE_SIZE_IN_WORDS);
     el.fill(PrimitiveValue::empty());
+}
+
+fn resize_to_fit(el: &mut Vec<U256>, idx: usize) {
+    if el.len() >= idx + 1 {
+        return;
+    }
+
+    el.resize(idx + 1, U256::zero());
 }
 
 // as usual, if we rollback the current frame then we apply changes to storage immediately,
@@ -217,16 +227,14 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
         // this one virtually exists always
         new.code_pages
             .insert(0u32, vec![U256::zero(); MAX_CODE_PAGE_SIZE_IN_WORDS]);
-        new.pages_with_extended_lifetime.insert(
-            BOOTLOADER_CALLDATA_PAGE,
-            vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS],
-        );
+        new.pages_with_extended_lifetime
+            .insert(BOOTLOADER_CALLDATA_PAGE, vec![U256::zero(); 1 << 10]);
         new.page_numbers_indirections.insert(0, Indirection::Empty); // quicker lookup
         new.indirections_to_cleanup_on_return
             .push(HashSet::with_capacity_and_hasher(4, S::default()));
         new.heaps.push((
-            (0u32, vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS]),
-            (0u32, vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS]),
+            (0u32, vec![U256::zero(); 1 << 10]),
+            (0u32, vec![U256::zero(); 1 << 20]),
         )); // formally, so we can access "last"
 
         new
@@ -247,17 +255,12 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
         // this one virtually exists always
         new.code_pages
             .insert(0u32, vec![U256::zero(); MAX_CODE_PAGE_SIZE_IN_WORDS]);
-        new.pages_with_extended_lifetime.insert(
-            BOOTLOADER_CALLDATA_PAGE,
-            vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS],
-        );
+        new.pages_with_extended_lifetime
+            .insert(BOOTLOADER_CALLDATA_PAGE, vec![]);
         new.page_numbers_indirections.insert(0, Indirection::Empty); // quicker lookup
         new.indirections_to_cleanup_on_return
             .push(HashSet::with_capacity_and_hasher(4, S::default()));
-        new.heaps.push((
-            (0u32, vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS]),
-            (0u32, vec![U256::zero(); MAX_HEAP_PAGE_SIZE_IN_WORDS]),
-        )); // formally, so we can access "last"
+        new.heaps.push(((0u32, vec![]), (0u32, vec![]))); // formally, so we can access "last"
 
         new
     }
@@ -283,20 +286,11 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
     // Can never populate stack or aux heap
     pub fn populate_heap(&mut self, values: Vec<U256>) {
         let heaps_data = self.heaps.last_mut().unwrap();
-        let len = values.len();
-        assert!(len <= MAX_HEAP_PAGE_SIZE_IN_WORDS);
-        let mut values = values;
-        values.resize(MAX_HEAP_PAGE_SIZE_IN_WORDS, U256::zero());
 
         heaps_data.0 .1 = values;
     }
 
     pub fn polulate_bootloaders_calldata(&mut self, values: Vec<U256>) {
-        let len = values.len();
-        assert!(len <= MAX_HEAP_PAGE_SIZE_IN_WORDS);
-        let mut values = values;
-        values.resize(MAX_HEAP_PAGE_SIZE_IN_WORDS, U256::zero());
-
         *self
             .pages_with_extended_lifetime
             .get_mut(&BOOTLOADER_CALLDATA_PAGE)
@@ -401,7 +395,7 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
     }
 
     pub fn dump_full_page(&self, page_number: u32) -> Vec<[u8; 32]> {
-        let upper_bound = MAX_HEAP_PAGE_SIZE_IN_WORDS as u32;
+        let upper_bound = 1 << 10;
         self.dump_page_content(page_number, 0..upper_bound)
     }
 }
@@ -423,10 +417,12 @@ impl Memory for SimpleMemory {
                         value: query.value,
                         is_pointer: query.value_is_pointer,
                     };
+                    assert!((query.location.index.0 as usize) < page.len(), "out of bounds for stack page for query {:?}", query);
                     page[query.location.index.0 as usize] = primitive
                 } else {
                     let (idx, page) = self.stack_pages.last().unwrap();
                     assert_eq!(*idx, page_number);
+                    assert!((query.location.index.0 as usize) < page.len(), "out of bounds for stack page for query {:?}", query);
                     let primitive = page[query.location.index.0 as usize];
                     query.value = primitive.value;
                     query.value_is_pointer = primitive.is_pointer;
@@ -441,9 +437,11 @@ impl Memory for SimpleMemory {
                     ) = self.heaps.last_mut().unwrap();
                     if a == MemoryType::Heap {
                         debug_assert_eq!(*current_heap_page, query.location.page.0);
+                        resize_to_fit(current_heap_content, query.location.index.0 as usize);
                         current_heap_content[query.location.index.0 as usize] = query.value;
                     } else if a == MemoryType::AuxHeap {
                         debug_assert_eq!(*current_aux_heap_page, query.location.page.0);
+                        resize_to_fit(current_aux_heap_content, query.location.index.0 as usize);
                         current_aux_heap_content[query.location.index.0 as usize] = query.value;
                     } else {
                         unreachable!()
@@ -452,12 +450,14 @@ impl Memory for SimpleMemory {
                     let (
                         (current_heap_page, current_heap_content),
                         (current_aux_heap_page, current_aux_heap_content),
-                    ) = self.heaps.last().unwrap();
+                    ) = self.heaps.last_mut().unwrap();
                     if a == MemoryType::Heap {
                         debug_assert_eq!(*current_heap_page, query.location.page.0);
+                        resize_to_fit(current_heap_content, query.location.index.0 as usize);
                         query.value = current_heap_content[query.location.index.0 as usize];
                     } else if a == MemoryType::AuxHeap {
                         debug_assert_eq!(*current_aux_heap_page, query.location.page.0);
+                        resize_to_fit(current_aux_heap_content, query.location.index.0 as usize);
                         query.value = current_aux_heap_content[query.location.index.0 as usize];
                     } else {
                         unreachable!()
@@ -472,23 +472,26 @@ impl Memory for SimpleMemory {
                     .get(&page_number)
                     .expect("fat pointer only points to reachable memory");
 
+                // NOTE: we CAN have a situation when e.g. callee returned part of the heap that
+                // was NEVER written into, so it's page would NOT be resized to the index which we try
+                // to access (even though fat pointe IS in bounds), so we need to use .get()
                 match indirection {
                     Indirection::Heap(index) => {
                         let forwarded_heap_data = &self.heaps[*index];
                         assert_eq!(forwarded_heap_data.0 .0, query.location.page.0);
-                        query.value = forwarded_heap_data.0 .1[query.location.index.0 as usize];
+                        query.value = forwarded_heap_data.0 .1.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
                     }
                     Indirection::AuxHeap(index) => {
                         let forwarded_heap_data = &self.heaps[*index];
                         assert_eq!(forwarded_heap_data.1 .0, query.location.page.0);
-                        query.value = forwarded_heap_data.1 .1[query.location.index.0 as usize];
+                        query.value = forwarded_heap_data.1 .1.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
                     }
                     Indirection::ReturndataExtendedLifetime => {
                         let page = self
                             .pages_with_extended_lifetime
                             .get(&page_number)
                             .expect("indirection target must exist");
-                        query.value = page[query.location.index.0 as usize];
+                        query.value = page.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
                     }
                     Indirection::Empty => {
                         query.value = U256::zero();
@@ -620,7 +623,7 @@ impl Memory for SimpleMemory {
                 .get(&calldata_fat_pointer.memory_page)
                 .expect("fat pointer must only point to reachable memory");
             match existing_indirection {
-                Indirection::Heap(..) | Indirection::AuxHeap(..) => {},
+                Indirection::Heap(..) | Indirection::AuxHeap(..) => {}
                 a @ _ => {
                     panic!("calldata forwaring using pointer {:?} should already have a heap/aux heap indirection, but has {:?}. All indirections:\n {:?}",
                         &calldata_fat_pointer,
@@ -693,8 +696,10 @@ impl Memory for SimpleMemory {
                 .pages_with_extended_lifetime
                 .insert(current_aux_heap_page, current_aux_heap_content);
             assert!(existing.is_none());
-            self.page_numbers_indirections
-                .insert(current_aux_heap_page, Indirection::ReturndataExtendedLifetime);
+            self.page_numbers_indirections.insert(
+                current_aux_heap_page,
+                Indirection::ReturndataExtendedLifetime,
+            );
             previous_frame_indirections_to_cleanup.insert(current_aux_heap_page);
 
             // and we can reuse another page

@@ -1,5 +1,6 @@
 use super::*;
 
+use zk_evm_abstractions::{aux::Timestamp, queries::LogQuery, vm::EventSink};
 use zkevm_opcode_defs::system_params::{EVENT_AUX_BYTE, L1_MESSAGE_AUX_BYTE};
 
 #[derive(Clone, Copy)]

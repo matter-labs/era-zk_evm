@@ -3,9 +3,9 @@ use zkevm_opcode_defs::decoding::VmEncodingMode;
 use zkevm_opcode_defs::ISAVersion;
 
 use super::*;
-use crate::aux_structures::MemoryPage;
-use crate::aux_structures::Timestamp;
 use crate::flags::Flags;
+use zk_evm_abstractions::aux::MemoryPage;
+use zk_evm_abstractions::aux::Timestamp;
 use zkevm_opcode_defs::decoding::AllowedPcOrImm;
 
 pub mod cycle;
@@ -55,6 +55,7 @@ impl PrimitiveValue {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VmLocalState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
     pub previous_code_word: U256,
+    pub previous_code_memory_page: MemoryPage,
     pub registers: [PrimitiveValue; zkevm_opcode_defs::REGISTERS_COUNT],
     pub flags: Flags,
     pub timestamp: u32,
@@ -67,19 +68,17 @@ pub struct VmLocalState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeP
     pub absolute_execution_step: u32,
     pub current_ergs_per_pubdata_byte: u32,
     pub tx_number_in_block: u16,
-    pub did_call_or_ret_recently: bool,
     pub pending_exception: bool,
     pub previous_super_pc: E::PcOrImm,
     pub context_u128_register: u128,
     pub callstack: Callstack<N, E>,
-    pub pending_port: SpongePendingPort,
-    pub pending_cycles_left: Option<usize>,
 }
 
 impl<const N: usize, E: VmEncodingMode<N>> VmLocalState<N, E> {
     pub fn empty_state() -> Self {
         Self {
             previous_code_word: U256::zero(),
+            previous_code_memory_page: MemoryPage(0u32),
             registers: [PrimitiveValue::empty(); zkevm_opcode_defs::REGISTERS_COUNT],
             flags: Flags::empty(),
             timestamp: STARTING_TIMESTAMP,
@@ -90,10 +89,7 @@ impl<const N: usize, E: VmEncodingMode<N>> VmLocalState<N, E> {
             current_ergs_per_pubdata_byte: 0,
             tx_number_in_block: 0,
             previous_super_pc: E::PcOrImm::from_u64_clipped(0),
-            did_call_or_ret_recently: true, // to properly start the execution
             pending_exception: false,
-            pending_port: SpongePendingPort::empty(),
-            pending_cycles_left: None,
             context_u128_register: 0u128,
             callstack: Callstack::empty(),
         }
@@ -117,35 +113,27 @@ pub struct DelayedLocalStateChanges<
     const N: usize = 8,
     E: VmEncodingMode<N> = EncodingModeProduction,
 > {
-    pub reset_pending_port: bool,
-    pub reset_did_call_or_ret_recently: bool,
     pub new_ergs_remaining: Option<u32>,
     pub new_previous_code_word: Option<U256>,
     pub new_previous_super_pc: Option<E::PcOrImm>,
     pub new_pending_exception: Option<bool>,
+    pub new_previous_code_memory_page: Option<MemoryPage>,
 }
 
 impl<const N: usize, E: VmEncodingMode<N>> Default for DelayedLocalStateChanges<N, E> {
     fn default() -> Self {
         Self {
-            reset_pending_port: false,
-            reset_did_call_or_ret_recently: false,
             new_ergs_remaining: None,
             new_previous_code_word: None,
             new_previous_super_pc: None,
             new_pending_exception: None,
+            new_previous_code_memory_page: None,
         }
     }
 }
 
 impl<const N: usize, E: VmEncodingMode<N>> DelayedLocalStateChanges<N, E> {
     pub fn apply(self, local_state: &mut VmLocalState<N, E>) {
-        if self.reset_pending_port {
-            local_state.pending_port.reset();
-        }
-        if self.reset_did_call_or_ret_recently {
-            local_state.did_call_or_ret_recently = false;
-        }
         if let Some(ergs_remaining) = self.new_ergs_remaining {
             local_state.callstack.get_current_stack_mut().ergs_remaining = ergs_remaining;
         }
@@ -160,17 +148,21 @@ impl<const N: usize, E: VmEncodingMode<N>> DelayedLocalStateChanges<N, E> {
         if let Some(new_pending_exception) = self.new_pending_exception {
             local_state.pending_exception = new_pending_exception;
         }
+
+        if let Some(new_previous_code_memory_page) = self.new_previous_code_memory_page {
+            local_state.previous_code_memory_page = new_previous_code_memory_page;
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct VmState<
     'a,
-    S: crate::abstractions::Storage,
-    M: crate::abstractions::Memory,
-    EV: crate::abstractions::EventSink,
-    PP: crate::abstractions::PrecompilesProcessor,
-    DP: crate::abstractions::DecommittmentProcessor,
+    S: zk_evm_abstractions::vm::Storage,
+    M: zk_evm_abstractions::vm::Memory,
+    EV: zk_evm_abstractions::vm::EventSink,
+    PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+    DP: zk_evm_abstractions::vm::DecommittmentProcessor,
     WT: crate::witness_trace::VmWitnessTracer<N, E>,
     const N: usize = 8,
     E: VmEncodingMode<N> = EncodingModeProduction,
@@ -187,11 +179,11 @@ pub struct VmState<
 
 impl<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
@@ -220,23 +212,14 @@ impl<
     pub fn reset_flags(&mut self) {
         self.local_state.flags.reset();
     }
-    pub fn is_any_pending(&self) -> bool {
-        self.local_state.pending_port.is_any_pending()
-    }
     pub fn callstack_is_full(&self) -> bool {
         self.local_state.callstack_is_full()
     }
     pub fn execution_has_ended(&self) -> bool {
         self.local_state.execution_has_ended()
     }
-    pub fn check_skip_cycles_due_to_pending(&mut self) -> bool {
-        let should_skip = self.local_state.pending_port.is_any_pending();
-        self.local_state.pending_port.reset();
-
-        should_skip
-    }
     pub fn compute_if_should_skip_cycle(&mut self) -> bool {
-        self.check_skip_cycles_due_to_pending() || self.execution_has_ended()
+        self.execution_has_ended()
     }
     pub fn timestamp_for_code_or_src_read(&self) -> Timestamp {
         self.local_state.timestamp_for_code_or_src_read()
