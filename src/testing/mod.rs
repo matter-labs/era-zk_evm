@@ -1,6 +1,4 @@
 use super::*;
-use crate::abstractions::*;
-use crate::aux_structures::*;
 use std::collections::*;
 
 pub const NUM_SHARDS: usize = 2;
@@ -10,8 +8,9 @@ pub mod simple_tracer;
 pub mod storage;
 
 use self::storage::InMemoryStorage;
-use crate::precompiles::DefaultPrecompilesProcessor;
 use crate::witness_trace::DummyTracer;
+use zk_evm_abstractions::precompiles::DefaultPrecompilesProcessor;
+use zk_evm_abstractions::queries::LogQuery;
 
 pub struct BasicTestingTools<const B: bool> {
     pub storage: InMemoryStorage,

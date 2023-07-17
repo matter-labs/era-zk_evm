@@ -3,6 +3,11 @@ use std::{collections::HashSet, hash::BuildHasher};
 
 use crate::vm_state::CallStackEntry;
 use crate::vm_state::PrimitiveValue;
+use zk_evm_abstractions::aux::{MemoryPage, Timestamp};
+use zk_evm_abstractions::queries::MemoryQuery;
+use zk_evm_abstractions::vm::{
+    Memory, MemoryType, MAX_CODE_PAGE_SIZE_IN_WORDS, MAX_STACK_PAGE_SIZE_IN_WORDS,
+};
 use zkevm_opcode_defs::{FatPointer, BOOTLOADER_CALLDATA_PAGE};
 
 use super::*;
@@ -620,7 +625,7 @@ impl Memory for SimpleMemory {
                 .get(&calldata_fat_pointer.memory_page)
                 .expect("fat pointer must only point to reachable memory");
             match existing_indirection {
-                Indirection::Heap(..) | Indirection::AuxHeap(..) => {},
+                Indirection::Heap(..) | Indirection::AuxHeap(..) => {}
                 a @ _ => {
                     panic!("calldata forwaring using pointer {:?} should already have a heap/aux heap indirection, but has {:?}. All indirections:\n {:?}",
                         &calldata_fat_pointer,
@@ -693,8 +698,10 @@ impl Memory for SimpleMemory {
                 .pages_with_extended_lifetime
                 .insert(current_aux_heap_page, current_aux_heap_content);
             assert!(existing.is_none());
-            self.page_numbers_indirections
-                .insert(current_aux_heap_page, Indirection::ReturndataExtendedLifetime);
+            self.page_numbers_indirections.insert(
+                current_aux_heap_page,
+                Indirection::ReturndataExtendedLifetime,
+            );
             previous_frame_indirections_to_cleanup.insert(current_aux_heap_page);
 
             // and we can reuse another page

@@ -1,8 +1,8 @@
 use super::*;
 
+use zk_evm_abstractions::aux::MemoryPage;
 use zkevm_opcode_defs::system_params::BOOTLOADER_FORMAL_ADDRESS;
 
-use crate::precompiles::*;
 use crate::vm_state::*;
 use crate::{
     block_properties::BlockProperties,

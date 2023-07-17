@@ -1,6 +1,7 @@
-use crate::U256;
-use zkevm_opcode_defs::decoding::VmEncodingMode;
+use crate::tracing::*;
+use zk_evm_abstractions::vm::Memory;
 pub use zkevm_opcode_defs::utils::*;
+use zkevm_opcode_defs::{decoding::VmEncodingMode, ethereum_types::U256};
 
 use lazy_static::lazy_static;
 
@@ -45,8 +46,6 @@ pub fn u256_to_address_unchecked(integer: &U256) -> crate::Address {
 
     crate::Address::from_slice(&buffer[12..32])
 }
-
-use crate::abstractions::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct GenericNoopTracer<M: Memory> {

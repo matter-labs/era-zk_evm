@@ -1,8 +1,10 @@
+use zk_evm_abstractions::{
+    queries::{DecommittmentQuery, LogQuery, MemoryQuery},
+    vm::{PrecompileCyclesWitness, RefundType, SpongeExecutionMarker},
+};
 use zkevm_opcode_defs::decoding::VmEncodingMode;
 
-use super::aux_structures::*;
 use super::*;
-use crate::abstractions::{PrecompileCyclesWitness, RefundType, SpongeExecutionMarker};
 use crate::vm_state::{CallStackEntry, VmLocalState};
 use std::ops::Range;
 

@@ -3,9 +3,9 @@ use zkevm_opcode_defs::decoding::VmEncodingMode;
 use zkevm_opcode_defs::ISAVersion;
 
 use super::*;
-use crate::aux_structures::MemoryPage;
-use crate::aux_structures::Timestamp;
 use crate::flags::Flags;
+use zk_evm_abstractions::aux::MemoryPage;
+use zk_evm_abstractions::aux::Timestamp;
 use zkevm_opcode_defs::decoding::AllowedPcOrImm;
 
 pub mod cycle;
@@ -166,11 +166,11 @@ impl<const N: usize, E: VmEncodingMode<N>> DelayedLocalStateChanges<N, E> {
 #[derive(Debug)]
 pub struct VmState<
     'a,
-    S: crate::abstractions::Storage,
-    M: crate::abstractions::Memory,
-    EV: crate::abstractions::EventSink,
-    PP: crate::abstractions::PrecompilesProcessor,
-    DP: crate::abstractions::DecommittmentProcessor,
+    S: zk_evm_abstractions::vm::Storage,
+    M: zk_evm_abstractions::vm::Memory,
+    EV: zk_evm_abstractions::vm::EventSink,
+    PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+    DP: zk_evm_abstractions::vm::DecommittmentProcessor,
     WT: crate::witness_trace::VmWitnessTracer<N, E>,
     const N: usize = 8,
     E: VmEncodingMode<N> = EncodingModeProduction,
@@ -187,11 +187,11 @@ pub struct VmState<
 
 impl<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,

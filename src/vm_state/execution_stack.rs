@@ -1,5 +1,4 @@
 use super::*;
-use crate::aux_structures::*;
 
 use zkevm_opcode_defs::{INITIAL_SP_ON_FAR_CALL, UNMAPPED_PAGE};
 

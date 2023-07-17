@@ -1,3 +1,6 @@
+use zk_evm_abstractions::aux::Timestamp;
+use zk_evm_abstractions::vm::{RefundType, Storage};
+
 use super::ApplicationData;
 use super::*;
 

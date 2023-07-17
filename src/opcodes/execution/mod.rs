@@ -1,6 +1,4 @@
 use super::*;
-use crate::abstractions::SpongeExecutionMarker;
-use crate::aux_structures::*;
 use crate::vm_state::*;
 use zkevm_opcode_defs::decoding::AllowedPcOrImm;
 use zkevm_opcode_defs::decoding::VmEncodingMode;

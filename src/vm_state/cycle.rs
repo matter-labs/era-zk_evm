@@ -1,8 +1,11 @@
 use super::*;
-use crate::abstractions::*;
-use crate::aux_structures::MemoryIndex;
-use crate::aux_structures::{MemoryKey, MemoryLocation};
+
 use crate::opcodes::parsing::*;
+use tracing::*;
+use zk_evm_abstractions::{
+    aux::*,
+    vm::{MemoryType, SpongeExecutionMarker},
+};
 use zkevm_opcode_defs::{ImmMemHandlerFlags, NopOpcode, Operand, RegOrImmFlags};
 
 pub struct PreState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
@@ -22,9 +25,9 @@ pub const READ_DST_FROM_MEMORY_SPONGE_IDX: usize = 2;
 pub fn read_and_decode<
     const N: usize,
     E: VmEncodingMode<N>,
-    M: crate::abstractions::Memory,
+    M: zk_evm_abstractions::vm::Memory,
     WT: crate::witness_trace::VmWitnessTracer<N, E>,
-    DT: crate::abstractions::tracing::Tracer<N, E, SupportedMemory = M>,
+    DT: crate::tracing::Tracer<N, E, SupportedMemory = M>,
 >(
     local_state: &VmLocalState<N, E>,
     memory: &M,
@@ -243,11 +246,11 @@ pub fn read_and_decode<
 
 impl<
         'a,
-        S: crate::abstractions::Storage,
-        M: crate::abstractions::Memory,
-        EV: crate::abstractions::EventSink,
-        PP: crate::abstractions::PrecompilesProcessor,
-        DP: crate::abstractions::DecommittmentProcessor,
+        S: zk_evm_abstractions::vm::Storage,
+        M: zk_evm_abstractions::vm::Memory,
+        EV: zk_evm_abstractions::vm::EventSink,
+        PP: zk_evm_abstractions::vm::PrecompilesProcessor,
+        DP: zk_evm_abstractions::vm::DecommittmentProcessor,
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
@@ -261,10 +264,10 @@ impl<
         )
     }
 
-    pub fn cycle<DT: crate::abstractions::tracing::Tracer<N, E, SupportedMemory = M>>(
+    pub fn cycle<DT: tracing::Tracer<N, E, SupportedMemory = M>>(
         &mut self,
         tracer: &mut DT,
-    ) {
+    ) -> anyhow::Result<()> {
         let (after_masking_decoded, delayed_changes, skip_cycle) =
             read_and_decode(&self.local_state, self.memory, self.witness_tracer, tracer);
         delayed_changes.apply(&mut self.local_state);
@@ -396,7 +399,7 @@ impl<
             is_kernel_mode,
         };
 
-        after_masking_decoded.apply(self, prestate);
+        after_masking_decoded.apply(self, prestate)?;
 
         if self.local_state.pending_port.is_any_pending() {
             debug_assert!(self.local_state.pending_cycles_left.is_none());
@@ -421,5 +424,7 @@ impl<
 
             tracer.after_execution(local_state, data, self.memory);
         }
+
+        Ok(())
     }
 }
