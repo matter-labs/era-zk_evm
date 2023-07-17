@@ -12,8 +12,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 num = { version = "0.4"}
 static_assertions = "1"
-zkevm_opcode_defs = { git = "https://github.com/matter-labs/zkevm_opcode_defs.git", branch = "v1.3.2" }
-zk_evm_abstractions = { git = "https://github.com/matter-labs/zk_evm_abstractions.git" }
+zkevm_opcode_defs = { git = "https://github.com/matter-labs/era-zkevm_opcode_defs.git", branch = "v1.3.2" }
+zk_evm_abstractions = { git = "https://github.com/matter-labs/era-zk_evm_abstractions.git" }
 lazy_static = "1.4"
 
 [dev-dependencies]
