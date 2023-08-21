@@ -83,8 +83,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             }
             // our formal definition of "in bounds" is strictly "less than", but we want to allow to return
             // "trivial" pointer, like `ret.ok r0`
-            // this captures the case of empty slice
-            if memory_quasi_fat_pointer.validate_as_slice() == false {
+            if memory_quasi_fat_pointer.validate_in_bounds() == false
+                && memory_quasi_fat_pointer.is_trivial() == false
+            {
                 inner_variant = RetOpcode::Panic;
             }
 

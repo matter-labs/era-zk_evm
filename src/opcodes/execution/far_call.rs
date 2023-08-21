@@ -8,8 +8,6 @@ use zkevm_opcode_defs::{INITIAL_SP_ON_FAR_CALL, UNMAPPED_PAGE};
 
 use zkevm_opcode_defs::bitflags::bitflags;
 
-pub const FORCED_ERGS_FOR_MSG_VALUE_SIMULATOR: bool = false;
-
 bitflags! {
     pub struct FarCallExceptionFlags: u64 {
         const INPUT_IS_NOT_POINTER_WHEN_EXPECTED = 1u64 << 0;
@@ -18,7 +16,6 @@ bitflags! {
         const NOT_ENOUGH_ERGS_TO_GROW_MEMORY = 1u64 << 3;
         const MALFORMED_ABI_QUASI_POINTER = 1u64 << 4;
         const CALL_IN_NOW_CONSTRUCTED_SYSTEM_CONTRACT = 1u64 << 5;
-        const NOTE_ENOUGH_ERGS_FOR_EXTRA_FAR_CALL_COSTS = 1u64 << 6;
     }
 }
 
@@ -117,7 +114,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
         // NOTE: our far-call MUST take ergs to cover storage read, but we also have a contribution
         // that depends on the actual code length, so we work with it here
-        let (mapped_code_page, ergs_after_code_read_and_exceptions_resolution, stipend_for_callee) = 
+        let (mapped_code_page, ergs_after_code_read_and_exceptions_resolution) = 
             {
                 let (code_hash, map_to_trivial) = if new_code_shard_id != 0 && !vm_state.block_properties.zkporter_is_available {
                     // we do NOT mask it into default AA here
@@ -276,8 +273,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     // pointer is malformed
                     exceptions.set(FarCallExceptionFlags::MALFORMED_ABI_QUASI_POINTER, true);
                 }
-                // this captures the case of empty slice
-                if far_call_abi.memory_quasi_fat_pointer.validate_as_slice() == false {
+                if far_call_abi.memory_quasi_fat_pointer.validate_in_bounds() == false
+                    && far_call_abi.memory_quasi_fat_pointer.is_trivial() == false
+                {
                     exceptions.set(FarCallExceptionFlags::MALFORMED_ABI_QUASI_POINTER, true);
                 }
 
@@ -379,46 +377,17 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     0
                 };
 
-                let mut msg_value_stipend = if FORCED_ERGS_FOR_MSG_VALUE_SIMULATOR == false {
-                    0
-                } else {
-                    if called_address_as_u256 == U256::from(zkevm_opcode_defs::ADDRESS_MSG_VALUE as u64) &&
-                        far_call_abi.to_system 
-                    {
-                        // use that doesn't know what's doing is trying to call "transfer"
-    
-                        let pubdata_related = vm_state.local_state.current_ergs_per_pubdata_byte.checked_mul(
-                            zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_PUBDATA_BYTES_TO_PREPAY
-                        ).expect("must fit into u32");
-                        pubdata_related.checked_add(zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_ADDITIVE_COST).expect("must not overflow")
-
-                    } else {
-                        0
-                    }
-                };
-
-                let remaining_ergs_of_caller_frame = 
-                    if remaining_ergs_after_growth >= msg_value_stipend {
-                        remaining_ergs_after_growth - msg_value_stipend
-                    } else {
-                        exceptions.set(FarCallExceptionFlags::NOTE_ENOUGH_ERGS_FOR_EXTRA_FAR_CALL_COSTS, true);
-                        // if tried to take and failed, but should not add it later on in this case
-                        msg_value_stipend = 0;
-
-                        0
-                    };
-
                 // we mask instead of branching
                 let cost_of_decommittment =
                     zkevm_opcode_defs::ERGS_PER_CODE_WORD_DECOMMITTMENT * code_length_in_words;
 
                 let mut remaining_ergs_after_decommittment =
-                    if remaining_ergs_of_caller_frame >= cost_of_decommittment {
-                        remaining_ergs_of_caller_frame - cost_of_decommittment
+                    if remaining_ergs_after_growth >= cost_of_decommittment {
+                        remaining_ergs_after_growth - cost_of_decommittment
                     } else {
                         exceptions.set(FarCallExceptionFlags::NOT_ENOUGH_ERGS_TO_DECOMMIT, true);
 
-                        remaining_ergs_of_caller_frame // do not burn, as it's irrelevant - we just will not perform a decommittment and call
+                        remaining_ergs_after_growth // do not burn, as it's irrelevant - we just will not perform a decommittment and call
                     };
 
                 let code_memory_page = if exceptions.is_empty() == false {
@@ -450,10 +419,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     processed_decommittment_query.memory_page
                 };
 
-                (code_memory_page, remaining_ergs_after_decommittment, msg_value_stipend)
+                (code_memory_page, remaining_ergs_after_decommittment)
             };
-
-        // we have taken everything that we want from caller and now can try to pass to callee
 
         // resolve passed ergs, by using a value afte decommittment cost is taken
         let remaining_ergs_to_pass = ergs_after_code_read_and_exceptions_resolution;
@@ -473,9 +440,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 )
             }
         };
-
-        // can not overflow
-        let passed_ergs = passed_ergs.wrapping_add(stipend_for_callee);
 
         // update current ergs and PC
         vm_state
@@ -543,8 +507,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             is_static: new_context_is_static,
             is_local_frame: false,
             context_u128_value: context_u128_for_next,
-            heap_bound: zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
-            aux_heap_bound: zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
+            heap_bound: 0u32,
+            aux_heap_bound: 0u32,
         };
 
         // zero out the temporary register if it was not trivial

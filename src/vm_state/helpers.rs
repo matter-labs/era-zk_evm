@@ -369,7 +369,6 @@ use zkevm_opcode_defs::bitflags::bitflags;
 use zkevm_opcode_defs::FatPointer;
 
 bitflags! {
-    #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct ErrorFlags: u64 {
         const INVALID_OPCODE = 1u64 << 0;
         const NOT_ENOUGH_ERGS = 1u64 << 1;

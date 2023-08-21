@@ -7,8 +7,6 @@ use zkevm_opcode_defs::{FatPointer, BOOTLOADER_CALLDATA_PAGE};
 
 use super::*;
 
-const MAX_HEAP_PAGE_SIZE_IN_WORDS: usize = (u16::MAX as usize) / 32;
-
 pub struct ReusablePool<
     T: Sized,
     InitFn: Fn() -> T,
@@ -67,7 +65,7 @@ impl<T: Sized, InitFn: Fn() -> T, OnPullFn: Fn(&mut T) -> (), OnReturnFn: Fn(&mu
 pub enum Indirection {
     Heap(usize),
     AuxHeap(usize),
-    ReturndataExtendedLifetime,
+    ExtendedLifetime,
     Empty,
 }
 
@@ -483,7 +481,7 @@ impl Memory for SimpleMemory {
                         assert_eq!(forwarded_heap_data.1 .0, query.location.page.0);
                         query.value = forwarded_heap_data.1 .1[query.location.index.0 as usize];
                     }
-                    Indirection::ReturndataExtendedLifetime => {
+                    Indirection::ExtendedLifetime => {
                         let page = self
                             .pages_with_extended_lifetime
                             .get(&page_number)
@@ -614,21 +612,14 @@ impl Memory for SimpleMemory {
                 .unwrap()
                 .insert(current_aux_heap_page);
         } else {
-            // calldata is unidirectional, so we check that it's already an indirection
-            let existing_indirection = self
-                .page_numbers_indirections
-                .get(&calldata_fat_pointer.memory_page)
-                .expect("fat pointer must only point to reachable memory");
-            match existing_indirection {
-                Indirection::Heap(..) | Indirection::AuxHeap(..) => {},
-                a @ _ => {
-                    panic!("calldata forwaring using pointer {:?} should already have a heap/aux heap indirection, but has {:?}. All indirections:\n {:?}",
-                        &calldata_fat_pointer,
-                        a,
-                        &self.page_numbers_indirections
-                    );
-                }
-            }
+            // it must be some extended lifetime page
+            assert!(self
+                .pages_with_extended_lifetime
+                .contains_key(&calldata_fat_pointer.memory_page));
+            self.page_numbers_indirections.insert(
+                calldata_fat_pointer.memory_page,
+                Indirection::ExtendedLifetime,
+            );
         }
     }
 
@@ -682,7 +673,7 @@ impl Memory for SimpleMemory {
                 .insert(current_heap_page, current_heap_content);
             assert!(existing.is_none());
             self.page_numbers_indirections
-                .insert(current_heap_page, Indirection::ReturndataExtendedLifetime);
+                .insert(current_heap_page, Indirection::ExtendedLifetime);
             previous_frame_indirections_to_cleanup.insert(current_heap_page);
 
             // and we can reuse another page
@@ -694,7 +685,7 @@ impl Memory for SimpleMemory {
                 .insert(current_aux_heap_page, current_aux_heap_content);
             assert!(existing.is_none());
             self.page_numbers_indirections
-                .insert(current_aux_heap_page, Indirection::ReturndataExtendedLifetime);
+                .insert(current_aux_heap_page, Indirection::ExtendedLifetime);
             previous_frame_indirections_to_cleanup.insert(current_aux_heap_page);
 
             // and we can reuse another page
