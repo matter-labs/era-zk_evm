@@ -254,7 +254,7 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState<'a, S, M, EV, PP, DP, WT, N, E>
+    > VmState<S, M, EV, PP, DP, WT, N, E>
 {
     #[inline]
     pub fn super_and_sub_pc_from_pc(pc: u16) -> (u16, u8) {
@@ -268,8 +268,12 @@ impl<
         &mut self,
         tracer: &mut DT,
     ) -> anyhow::Result<()> {
-        let (after_masking_decoded, delayed_changes, skip_cycle) =
-            read_and_decode(&self.local_state, self.memory, self.witness_tracer, tracer);
+        let (after_masking_decoded, delayed_changes, skip_cycle) = read_and_decode(
+            &self.local_state,
+            &mut self.memory,
+            &mut self.witness_tracer,
+            tracer,
+        );
         delayed_changes.apply(&mut self.local_state);
 
         // now we are exception-less!
@@ -382,7 +386,7 @@ impl<
                 new_pc,
             };
 
-            tracer.before_execution(local_state, data, self.memory);
+            tracer.before_execution(local_state, data, &mut self.memory);
         }
 
         let is_kernel_mode = self
@@ -422,7 +426,7 @@ impl<
                 dst0_mem_location,
             };
 
-            tracer.after_execution(local_state, data, self.memory);
+            tracer.after_execution(local_state, data, &mut self.memory);
         }
 
         Ok(())
