@@ -1,5 +1,3 @@
-#![allow(dropping_references)]
-
 pub mod block_properties;
 pub mod errors;
 pub mod flags;
