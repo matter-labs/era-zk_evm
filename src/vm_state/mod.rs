@@ -12,13 +12,11 @@ pub mod cycle;
 pub mod execution_stack;
 pub mod helpers;
 pub mod mem_ops;
-pub mod pending_port;
 
 pub use self::cycle::*;
 pub use self::execution_stack::*;
 pub use self::helpers::*;
 pub use self::mem_ops::*;
-pub use self::pending_port::*;
 
 pub const SUPPORTED_ISA_VERSION: ISAVersion = ISAVersion(1);
 

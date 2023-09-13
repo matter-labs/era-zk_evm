@@ -180,6 +180,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             // we do nothing with it later on, so just keep returndata page, and set zeroes for other
             Some(memory_quasi_fat_pointer)
         };
+
+        #[allow(dropping_references)]
         drop(current_callstack);
 
         // done with exceptions, so we can pop the callstack entry

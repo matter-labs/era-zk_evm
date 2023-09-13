@@ -2,9 +2,7 @@ use super::*;
 
 use zk_evm_abstractions::aux::Timestamp;
 use zk_evm_abstractions::queries::LogQuery;
-use zkevm_opcode_defs::{
-    LogOpcode, Opcode, PrecompileCallABI, PrecompileCallInnerABI, FIRST_MESSAGE_FLAG_IDX,
-};
+use zkevm_opcode_defs::{LogOpcode, Opcode, PrecompileCallABI, FIRST_MESSAGE_FLAG_IDX};
 
 use zkevm_opcode_defs::system_params::{
     EVENT_AUX_BYTE, L1_MESSAGE_AUX_BYTE, PRECOMPILE_AUX_BYTE, STORAGE_AUX_BYTE,
@@ -76,6 +74,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 let current_context = vm_state.local_state.callstack.get_current_stack();
                 let address = current_context.this_address;
                 let shard_id = current_context.this_shard_id;
+
+                #[allow(dropping_references)]
                 drop(current_context);
 
                 // we do not need all the values here, but we DO need the written value
@@ -154,7 +154,10 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         let current_context = vm_state.local_state.callstack.get_current_stack();
         let address = current_context.this_address;
         let shard_id = current_context.this_shard_id;
+
+        #[allow(dropping_references)]
         drop(current_context);
+
         let tx_number_in_block = vm_state.local_state.tx_number_in_block;
         let timestamp_for_log = vm_state.timestamp_for_first_decommit_or_precompile_read();
         match inner_variant {
@@ -261,51 +264,42 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     return;
                 }
 
-                let precompile_abi = PrecompileCallABI::from_u256(src0);
-                let PrecompileCallABI {
-                    input_memory_offset,
-                    input_memory_length,
-                    output_memory_offset,
-                    output_memory_length,
-                    per_precompile_interpreted,
-                } = precompile_abi;
-
+                let mut precompile_abi = PrecompileCallABI::from_u256(src0);
                 // normal execution
                 vm_state
                     .local_state
                     .callstack
                     .get_current_stack_mut()
                     .ergs_remaining = ergs_remaining;
-                let memory_page_to_read = CallStackEntry::<N, E>::heap_page_from_base(
-                    vm_state
-                        .local_state
-                        .callstack
-                        .get_current_stack()
-                        .base_memory_page,
-                );
-                let memory_page_to_write = CallStackEntry::<N, E>::heap_page_from_base(
-                    vm_state
-                        .local_state
-                        .callstack
-                        .get_current_stack()
-                        .base_memory_page,
-                );
+                if precompile_abi.memory_page_to_read == 0 {
+                    let memory_page_to_read = CallStackEntry::<N, E>::heap_page_from_base(
+                        vm_state
+                            .local_state
+                            .callstack
+                            .get_current_stack()
+                            .base_memory_page,
+                    );
+                    precompile_abi.memory_page_to_read = memory_page_to_read.0;
+                }
+
+                if precompile_abi.memory_page_to_write == 0 {
+                    let memory_page_to_write = CallStackEntry::<N, E>::heap_page_from_base(
+                        vm_state
+                            .local_state
+                            .callstack
+                            .get_current_stack()
+                            .base_memory_page,
+                    );
+                    precompile_abi.memory_page_to_write = memory_page_to_write.0;
+                }
 
                 let timestamp_to_read = vm_state.timestamp_for_first_decommit_or_precompile_read();
+                debug_assert!(timestamp_to_read == timestamp_for_log);
                 let timestamp_to_write =
                     vm_state.timestamp_for_second_decommit_or_precompile_write();
-                assert!(timestamp_to_read.0 + 1 == timestamp_to_write.0);
+                debug_assert!(timestamp_to_read.0 + 1 == timestamp_to_write.0);
 
-                let precompile_inner_abi = PrecompileCallInnerABI {
-                    input_memory_offset,
-                    input_memory_length,
-                    output_memory_offset,
-                    output_memory_length,
-                    memory_page_to_read: memory_page_to_read.0,
-                    memory_page_to_write: memory_page_to_write.0,
-                    precompile_interpreted_data: per_precompile_interpreted,
-                };
-                let precompile_inner_abi = precompile_inner_abi.to_u256();
+                let precompile_abi_encoded = precompile_abi.to_u256();
 
                 let query = LogQuery {
                     timestamp: timestamp_for_log,
@@ -313,13 +307,14 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     aux_byte: PRECOMPILE_AUX_BYTE,
                     shard_id,
                     address,
-                    key: precompile_inner_abi,
+                    key: precompile_abi_encoded,
                     read_value: U256::zero(),
                     written_value: U256::zero(),
                     rw_flag: false,
                     rollback: false,
                     is_service: is_first_message,
                 };
+
                 vm_state.call_precompile(vm_state.local_state.monotonic_cycle_counter, query);
                 let result = PrimitiveValue {
                     value: U256::from(1u64),

@@ -96,6 +96,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         let remaining_ergs = current_stack.ergs_remaining;
         let current_context_u128 = current_stack.context_u128_value;
 
+        #[allow(dropping_references)]
         drop(current_stack);
 
         let timestamp_for_storage_read = vm_state.timestamp_for_first_decommit_or_precompile_read();
@@ -368,6 +369,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 FarCallForwardPageType::ForwardFatPointer => 0u32,
             };
 
+            #[allow(dropping_references)]
             drop(current_stack_mut);
 
             // MEMORY_GROWTH_ERGS_PER_BYTE is always 1

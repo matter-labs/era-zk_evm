@@ -1,3 +1,6 @@
+.vscode/
+
 /target
 Cargo.lock
-.github
+
+/.idea/

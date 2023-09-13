@@ -1,10 +1,10 @@
 use super::*;
 
 mod keccak256;
-mod sha256;
-mod ecrecover;
+// mod sha256;
+// mod ecrecover;
 
-fn pretty_print_memory_dump(content: &Vec<[u8; 32]>, range: std::ops::Range<u16>) {
+fn pretty_print_memory_dump(content: &Vec<[u8; 32]>, range: std::ops::Range<u32>) {
     println!("Memory dump:");
     println!("-----------------------------------------");
     for (cont, index) in content.into_iter().zip(range.into_iter()) {

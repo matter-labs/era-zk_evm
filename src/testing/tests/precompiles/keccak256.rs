@@ -1,138 +1,196 @@
 use super::*;
 
-use crate::precompiles::keccak256::*;
+use zk_evm_abstractions::auxiliary::*;
+use zk_evm_abstractions::queries::MemoryQuery;
+use zk_evm_abstractions::vm::Memory;
+use zk_evm_abstractions::vm::MemoryType;
+use zk_evm_abstractions::vm::PrecompilesProcessor;
+use zkevm_opcode_defs::PrecompileCallABI;
 
-fn pad_and_fill_memory<M: Memory>(input: &[u8], page: u32, memory: &mut M) -> u16 {
-    let mut padded = vec![];
-    padded.extend_from_slice(input);
-
-    let block_size = KECCAK_RATE_IN_U64_WORDS * 8;
-    let last_block_size = padded.len() % block_size;
-    let padlen = block_size - last_block_size;
-    if padlen == 1 {
-        padded.push(0x81);
-    } else {
-        padded.push(0x01);
-        padded.extend(std::iter::repeat(0u8).take(padlen - 2));
-        padded.push(0x80);
-    }
-   
-    assert_eq!(padded.len() % block_size, 0);
-
-    let num_rounds = padded.len() / block_size;
-
-    let mut num_rounds_u256 = U256::zero();
-    num_rounds_u256.0[0] = num_rounds as u64;
-    println!("Num rounds = {}", num_rounds_u256);
-    let mut location = MemoryLocation {page: MemoryPage(page), index: MemoryIndex(0)};
-    let num_rounds_query = MemoryQuery {
-        timestamp: Timestamp(0u32),
-        location,
-        value: num_rounds_u256,
-        rw_flag: true
-    };
-
-    let _ = memory.execute_partial_query(num_rounds_query);
-
-    let total_len_as_u64_words = padded.len() / 8;
-    let mut num_words = total_len_as_u64_words / 4;
-    if total_len_as_u64_words % 4 != 0 {
-        num_words += 1;
-    }
-
-    let mut chunk_iter = padded.chunks_exact(8);
-
-    for _word in 0..num_words {
-        location.index.0 += 1;
-        let mut value = U256::zero();
-        for i in (0..4).rev() {
-            if let Some(chunk) = chunk_iter.next() {
-                let as_u64 = u64::from_be_bytes(chunk.try_into().unwrap());
-                value.0[i] = as_u64;
+fn bytes_to_u256_words(input: Vec<u8>, unalignement: usize) -> Vec<U256> {
+    let mut result = vec![];
+    let mut it = std::iter::repeat(0xffu8)
+        .take(unalignement)
+        .chain(input.into_iter());
+    'outer: loop {
+        let mut done = false;
+        let mut buffer = [0u8; 32];
+        for (idx, dst) in buffer.iter_mut().enumerate() {
+            if let Some(src) = it.next() {
+                *dst = src;
+            } else {
+                done = true;
+                if idx == 0 {
+                    break 'outer;
+                }
+                break;
             }
         }
-
-        let data_query = MemoryQuery {
-            timestamp: Timestamp(0u32),
-            location,
-            value,
-            rw_flag: true
-        };
-
-        let _ = memory.execute_partial_query(data_query);
+        let el = U256::from_big_endian(&buffer);
+        result.push(el);
+        if done {
+            break 'outer;
+        }
     }
 
-    assert!(chunk_iter.remainder().len() == 0);
+    result
+}
 
-    (1 + num_words) as u16
+fn pad_and_fill_memory<M: Memory>(
+    input: &[u8],
+    page: u32,
+    memory: &mut M,
+    unalignment: u32,
+) -> u32 {
+    let input = input.to_vec();
+    let words = bytes_to_u256_words(input, unalignment as usize);
+    let mut index = 0u32;
+    let num_words = words.len() as u32;
+
+    for word in words.into_iter() {
+        let location = MemoryLocation {
+            page: MemoryPage(page),
+            index: MemoryIndex(index),
+            memory_type: MemoryType::Heap,
+        };
+        let num_rounds_query = MemoryQuery {
+            timestamp: Timestamp(0u32),
+            location,
+            value: word,
+            value_is_pointer: false,
+            rw_flag: true,
+        };
+
+        let _ = memory.execute_partial_query(1, num_rounds_query);
+        index += 1;
+    }
+
+    num_words
 }
 
 use sha3::Digest;
 use sha3::Keccak256;
 
-fn run_keccak256_test_inner(input: &[u8]) -> (Vec<[u8; 32]>, std::ops::Range<u16>) {
+fn run_keccak256_test_inner(
+    input: &[u8],
+    unalignment: u32,
+) -> (Vec<[u8; 32]>, std::ops::Range<u32>) {
     let mut memory = SimpleMemory::new();
+
+    let input_memory_page = 4u32;
+    let output_memory_page = 4u32;
+
+    memory.heaps.push((
+        (input_memory_page, vec![U256::zero(); 1 << 10]),
+        (0, vec![U256::zero(); 0]),
+    ));
+    memory.page_numbers_indirections.insert(
+        input_memory_page,
+        reference_impls::memory::Indirection::Heap(1),
+    );
     let mut precompiles_processor = DefaultPrecompilesProcessor::<false>;
 
     let mut hasher = Keccak256::default();
     hasher.update(input);
     let result = hasher.finalize();
-    let bytes: &[u8] = result.as_ref();
-    println!("{}", hex::encode(bytes));
+    let expected_output: &[u8] = result.as_ref();
 
     // fill the memory
-    let num_words_used = pad_and_fill_memory(input, 0u32, &mut memory);
+    let num_words_used = pad_and_fill_memory(input, input_memory_page, &mut memory, unalignment);
+    let input_byte_offset = unalignment;
+    let input_length = input.len();
 
-    let precompile_call_params = PrecompileCallParams {
-        input_location: MemoryLocation {page: MemoryPage(0u32), index: MemoryIndex(0u16)},
-        output_location: MemoryLocation {page: MemoryPage(0u32), index: MemoryIndex(num_words_used)},
-        timestamp_for_input_read: Timestamp(1u32),
-        timestamp_for_output_write: Timestamp(2u32),
+    let precompile_abi = PrecompileCallABI {
+        input_memory_offset: input_byte_offset,
+        input_memory_length: input_length as u32,
+        output_memory_offset: num_words_used as u32,
+        output_memory_length: 0,
+        memory_page_to_read: input_memory_page,
+        memory_page_to_write: output_memory_page,
+        precompile_interpreted_data: 0,
     };
 
-    let address = Address::from_low_u64_be(KECCAK256_ROUND_FUNCTION_PRECOMPILE_ADDRESS as u64);
+    let address =
+        *zkevm_opcode_defs::system_params::KECCAK256_ROUND_FUNCTION_PRECOMPILE_FORMAL_ADDRESS;
 
     let precompile_query = LogQuery {
-        timestamp: precompile_call_params.timestamp_for_input_read,
+        timestamp: Timestamp(1),
         tx_number_in_block: 0,
         shard_id: 0,
-        aux_byte: PRECOMPILE_AUX_BYTE,
+        aux_byte: zkevm_opcode_defs::system_params::PRECOMPILE_AUX_BYTE,
         address,
-        key: U256::zero(),
-        read_value: precompile_call_params.encode_into_log_value(),
+        key: precompile_abi.to_u256(),
+        read_value: U256::zero(),
         written_value: U256::zero(),
         rw_flag: false,
         rollback: false,
         is_service: false,
     };
 
-    let _ = precompiles_processor.execute_precompile(precompile_query, &mut memory);
+    let _ = precompiles_processor.execute_precompile(4, precompile_query, &mut memory);
 
-    let range = 0u16..(num_words_used + 1);
-    let content = memory.dump_page_content(0u32, range.clone());
-    let expected_output = content.last().copied().unwrap();
+    let range = 0u32..(num_words_used + 1);
+    let content = memory.dump_page_content(output_memory_page, range.clone());
+    let output = content.last().copied().unwrap();
 
-    assert_eq!(&expected_output[..], bytes);
+    dbg!(hex::encode(&expected_output));
+    dbg!(hex::encode(&output));
+
+    assert_eq!(&expected_output[..], &output[..]);
 
     (content, range)
 }
 
 #[test]
 fn test_empty_keccak256() {
-    let (content, range) = run_keccak256_test_inner(&[]);
+    let (content, range) = run_keccak256_test_inner(&[], 0);
     pretty_print_memory_dump(&content, range);
 }
 
 #[test]
-fn test_few_rounds_of_keccak256() {
-    let data = vec![255u8; 256];
-    let (content, range) = run_keccak256_test_inner(&data);
+fn test_empty_keccak256_unaligned() {
+    let (content, range) = run_keccak256_test_inner(&[], 31);
     pretty_print_memory_dump(&content, range);
 }
 
 #[test]
-fn test_very_long_keccak256() {
-    let data = vec![255u8; 10_000];
-    let (content, range) = run_keccak256_test_inner(&data);
+fn test_one_round_of_keccak256() {
+    let data = vec![123u8; 50];
+    let (content, range) = run_keccak256_test_inner(&data, 0);
+    pretty_print_memory_dump(&content, range);
+}
+
+#[test]
+fn test_one_round_of_keccak256_unaligned() {
+    let data = vec![123u8; 50];
+    let (content, range) = run_keccak256_test_inner(&data, 31);
+    pretty_print_memory_dump(&content, range);
+}
+
+#[test]
+fn test_one_round_of_keccak256_with_full_paddings() {
+    let data = vec![123u8; 136];
+    let (content, range) = run_keccak256_test_inner(&data, 0);
+    pretty_print_memory_dump(&content, range);
+}
+
+#[test]
+fn test_one_round_of_keccak256_with_full_paddings_unaligned() {
+    let data = vec![123u8; 136];
+    let (content, range) = run_keccak256_test_inner(&data, 31);
+    pretty_print_memory_dump(&content, range);
+}
+
+#[test]
+fn test_two_rounds_of_keccak256() {
+    let data = vec![123u8; 200];
+    let (content, range) = run_keccak256_test_inner(&data, 0);
+    pretty_print_memory_dump(&content, range);
+}
+
+#[test]
+fn test_two_rounds_of_keccak256_unaligned() {
+    let data = vec![123u8; 200];
+    let (content, range) = run_keccak256_test_inner(&data, 31);
     pretty_print_memory_dump(&content, range);
 }
