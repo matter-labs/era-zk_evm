@@ -165,7 +165,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DelayedLocalStateChanges<N, E> {
 
 #[derive(Debug)]
 pub struct VmState<
-    'a,
     S: zk_evm_abstractions::vm::Storage,
     M: zk_evm_abstractions::vm::Memory,
     EV: zk_evm_abstractions::vm::EventSink,
@@ -176,17 +175,16 @@ pub struct VmState<
     E: VmEncodingMode<N> = EncodingModeProduction,
 > {
     pub local_state: VmLocalState<N, E>,
-    pub block_properties: &'a crate::block_properties::BlockProperties,
-    pub storage: &'a mut S,
-    pub memory: &'a mut M,
-    pub event_sink: &'a mut EV,
-    pub precompiles_processor: &'a mut PP,
-    pub decommittment_processor: &'a mut DP,
-    pub witness_tracer: &'a mut WT,
+    pub block_properties: crate::block_properties::BlockProperties,
+    pub storage: S,
+    pub memory: M,
+    pub event_sink: EV,
+    pub precompiles_processor: PP,
+    pub decommittment_processor: DP,
+    pub witness_tracer: WT,
 }
 
 impl<
-        'a,
         S: zk_evm_abstractions::vm::Storage,
         M: zk_evm_abstractions::vm::Memory,
         EV: zk_evm_abstractions::vm::EventSink,
@@ -195,16 +193,16 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState<'a, S, M, EV, PP, DP, WT, N, E>
+    > VmState<S, M, EV, PP, DP, WT, N, E>
 {
     pub fn empty_state(
-        storage: &'a mut S,
-        memory: &'a mut M,
-        event_sink: &'a mut EV,
-        precompiles_processor: &'a mut PP,
-        decommittment_processor: &'a mut DP,
-        witness_tracer: &'a mut WT,
-        block_properties: &'a crate::block_properties::BlockProperties,
+        storage: S,
+        memory: M,
+        event_sink: EV,
+        precompiles_processor: PP,
+        decommittment_processor: DP,
+        witness_tracer: WT,
+        block_properties: crate::block_properties::BlockProperties,
     ) -> Self {
         Self {
             local_state: VmLocalState::empty_state(),
