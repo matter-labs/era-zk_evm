@@ -42,7 +42,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
-        vm_state: &mut VmState<'a, S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &mut VmState<S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) -> anyhow::Result<()> {
         let PreState {
