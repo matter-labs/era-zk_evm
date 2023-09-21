@@ -417,12 +417,20 @@ impl Memory for SimpleMemory {
                         value: query.value,
                         is_pointer: query.value_is_pointer,
                     };
-                    assert!((query.location.index.0 as usize) < page.len(), "out of bounds for stack page for query {:?}", query);
+                    assert!(
+                        (query.location.index.0 as usize) < page.len(),
+                        "out of bounds for stack page for query {:?}",
+                        query
+                    );
                     page[query.location.index.0 as usize] = primitive
                 } else {
                     let (idx, page) = self.stack_pages.last().unwrap();
                     assert_eq!(*idx, page_number);
-                    assert!((query.location.index.0 as usize) < page.len(), "out of bounds for stack page for query {:?}", query);
+                    assert!(
+                        (query.location.index.0 as usize) < page.len(),
+                        "out of bounds for stack page for query {:?}",
+                        query
+                    );
                     let primitive = page[query.location.index.0 as usize];
                     query.value = primitive.value;
                     query.value_is_pointer = primitive.is_pointer;
@@ -479,19 +487,32 @@ impl Memory for SimpleMemory {
                     Indirection::Heap(index) => {
                         let forwarded_heap_data = &self.heaps[*index];
                         assert_eq!(forwarded_heap_data.0 .0, query.location.page.0);
-                        query.value = forwarded_heap_data.0 .1.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
+                        query.value = forwarded_heap_data
+                            .0
+                             .1
+                            .get(query.location.index.0 as usize)
+                            .copied()
+                            .unwrap_or(U256::zero());
                     }
                     Indirection::AuxHeap(index) => {
                         let forwarded_heap_data = &self.heaps[*index];
                         assert_eq!(forwarded_heap_data.1 .0, query.location.page.0);
-                        query.value = forwarded_heap_data.1 .1.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
+                        query.value = forwarded_heap_data
+                            .1
+                             .1
+                            .get(query.location.index.0 as usize)
+                            .copied()
+                            .unwrap_or(U256::zero());
                     }
                     Indirection::ReturndataExtendedLifetime => {
                         let page = self
                             .pages_with_extended_lifetime
                             .get(&page_number)
                             .expect("indirection target must exist");
-                        query.value = page.get(query.location.index.0 as usize).copied().unwrap_or(U256::zero());
+                        query.value = page
+                            .get(query.location.index.0 as usize)
+                            .copied()
+                            .unwrap_or(U256::zero());
                     }
                     Indirection::Empty => {
                         query.value = U256::zero();
