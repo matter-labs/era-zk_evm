@@ -2,6 +2,7 @@ use super::*;
 
 use zk_evm_abstractions::aux::MemoryPage;
 use zk_evm_abstractions::aux::Timestamp;
+use zk_evm_abstractions::aux::*;
 use zk_evm_abstractions::queries::LogQuery;
 use zk_evm_abstractions::vm::SpongeExecutionMarker;
 use zkevm_opcode_defs::definitions::far_call::*;

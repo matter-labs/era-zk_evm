@@ -1,4 +1,4 @@
-use zk_evm_abstractions::{aux::MemoryLocation, vm::Memory};
+use zk_evm_abstractions::{aux::MemoryLocation, queries::MemoryQuery, vm::Memory};
 use zkevm_opcode_defs::decoding::{EncodingModeProduction, VmEncodingMode};
 
 use crate::{

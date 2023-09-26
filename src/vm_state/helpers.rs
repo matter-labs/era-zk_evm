@@ -17,7 +17,7 @@ pub fn read_code<
     witness_tracer: &mut WT,
     monotonic_cycle_counter: u32,
     key: MemoryKey,
-    _is_pended: bool,
+    is_pended: bool,
 ) -> MemoryQuery {
     let MemoryKey {
         location,
@@ -56,7 +56,7 @@ impl<
         &mut self,
         monotonic_cycle_counter: u32,
         key: MemoryKey,
-        _is_pended: bool,
+        is_pended: bool,
     ) -> MemoryQuery {
         let MemoryKey {
             location,
@@ -102,7 +102,7 @@ impl<
         monotonic_cycle_counter: u32,
         key: MemoryKey,
         value: PrimitiveValue,
-        _is_pended: bool,
+        is_pended: bool,
     ) -> MemoryQuery {
         let MemoryKey {
             location,
