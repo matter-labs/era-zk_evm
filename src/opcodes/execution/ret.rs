@@ -242,6 +242,14 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             // just use a saved value
         }
 
+        // grow memory on near call
+        if finished_callstack.is_local_frame == true {
+            if finished_callstack.heap_bound >= next_context.heap_bound {
+                next_context.heap_bound = finished_callstack.heap_bound;
+                next_context.aux_heap_bound = finished_callstack.aux_heap_bound;
+            }
+        }
+
         // and set flag on panic
         if inner_variant == RetOpcode::Panic {
             vm_state.local_state.flags.overflow_or_less_than_flag = true;
