@@ -19,11 +19,10 @@ pub fn create_default_block_info() -> BlockProperties {
     }
 }
 
-pub fn create_initial_vm_state_for_basic_testing<'a, const B: bool>(
-    tools: &'a mut BasicTestingTools<B>,
-    block_properties: &'a BlockProperties,
+pub fn create_initial_vm_state_for_basic_testing<const B: bool>(
+    tools: BasicTestingTools<B>,
+    block_properties: BlockProperties,
 ) -> VmState<
-    'a,
     InMemoryStorage,
     SimpleMemory,
     InMemoryEventSink,
@@ -32,12 +31,12 @@ pub fn create_initial_vm_state_for_basic_testing<'a, const B: bool>(
     DummyTracer,
 > {
     let mut vm = VmState::empty_state(
-        &mut tools.storage,
-        &mut tools.memory,
-        &mut tools.event_sink,
-        &mut tools.precompiles_processor,
-        &mut tools.decommittment_processor,
-        &mut tools.witness_tracer,
+        tools.storage,
+        tools.memory,
+        tools.event_sink,
+        tools.precompiles_processor,
+        tools.decommittment_processor,
+        tools.witness_tracer,
         block_properties,
     );
 
