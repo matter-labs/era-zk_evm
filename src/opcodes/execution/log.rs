@@ -10,7 +10,6 @@ use zkevm_opcode_defs::system_params::{
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn log_opcode_apply<
-        'a,
         S: crate::abstractions::Storage,
         M: crate::abstractions::Memory,
         EV: crate::abstractions::EventSink,
@@ -19,7 +18,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
-        vm_state: &mut VmState<'a, S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &mut VmState< S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) {
         let PreState {

@@ -54,7 +54,7 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState<'a, S, M, EV, PP, DP, WT, N, E>
+    > VmState< S, M, EV, PP, DP, WT, N, E>
 {
     pub fn read_memory(
         &mut self,
@@ -94,8 +94,8 @@ impl<
         is_pended: bool,
     ) -> MemoryQuery {
         read_code(
-            self.memory,
-            self.witness_tracer,
+            &mut self.memory,
+            &mut self.witness_tracer,
             monotonic_cycle_counter,
             key,
             is_pended,
@@ -199,7 +199,7 @@ impl<
         let (query, witness_for_tracer) = self.decommittment_processor.decommit_into_memory(
             monotonic_cycle_counter,
             partial_query,
-            self.memory,
+            &mut self.memory,
         );
 
         if let Some(witness_for_tracer) = witness_for_tracer {
@@ -230,7 +230,7 @@ impl<
         // add execution aux data
         if let Some((mem_in, mem_out, round_witness)) = self
             .precompiles_processor
-            .execute_precompile::<_>(monotonic_cycle_counter, query, self.memory)
+            .execute_precompile::<_>(monotonic_cycle_counter, query, &mut self.memory)
         {
             self.witness_tracer.add_precompile_call_result(
                 monotonic_cycle_counter,
