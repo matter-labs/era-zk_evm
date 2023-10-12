@@ -14,7 +14,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
-        vm_state: &mut VmState< S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &mut VmState<S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) {
         let PreState { src0, .. } = prestate;
@@ -100,7 +100,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             None
         } else {
             match inner_variant {
-                RetOpcode::Ok |  RetOpcode::Revert => {
+                RetOpcode::Ok | RetOpcode::Revert => {
                     match page_forwarding_mode {
                         RetForwardPageType::ForwardFatPointer => {
                             // We can formally shrink the pointer
@@ -111,7 +111,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                             let new_length = memory_quasi_fat_pointer
                                 .length
                                 .wrapping_sub(memory_quasi_fat_pointer.offset);
-    
+
                             memory_quasi_fat_pointer.start = new_start;
                             memory_quasi_fat_pointer.length = new_length;
                             memory_quasi_fat_pointer.offset = 0;
@@ -121,7 +121,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                                 current_callstack.base_memory_page,
                             )
                             .0;
-    
+
                             memory_quasi_fat_pointer.memory_page = owned_page;
                         }
                         RetForwardPageType::UseAuxHeap => {
@@ -129,11 +129,11 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                                 current_callstack.base_memory_page,
                             )
                             .0;
-    
+
                             memory_quasi_fat_pointer.memory_page = owned_page;
                         }
                     }
-                },
+                }
                 RetOpcode::Panic => {
                     memory_quasi_fat_pointer = FatPointer::empty();
                 }
@@ -173,8 +173,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             };
 
             // MEMORY_GROWTH_ERGS_PER_BYTE is always 1
-            let cost_of_memory_growth = memory_growth_in_bytes
-                .wrapping_mul(zkevm_opcode_defs::MEMORY_GROWTH_ERGS_PER_BYTE);
+            let cost_of_memory_growth =
+                memory_growth_in_bytes.wrapping_mul(zkevm_opcode_defs::MEMORY_GROWTH_ERGS_PER_BYTE);
             if ergs_remaining >= cost_of_memory_growth {
                 ergs_remaining -= cost_of_memory_growth;
             } else {
