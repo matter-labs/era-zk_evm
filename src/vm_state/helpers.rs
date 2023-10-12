@@ -54,7 +54,7 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState< S, M, EV, PP, DP, WT, N, E>
+    > VmState<S, M, EV, PP, DP, WT, N, E>
 {
     pub fn read_memory(
         &mut self,
