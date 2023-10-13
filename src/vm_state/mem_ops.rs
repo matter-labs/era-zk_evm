@@ -20,7 +20,7 @@ impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &mut self,
-        vm_state: &VmState< S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &VmState<S, M, EV, PP, DP, WT, N, E>,
         register_index_encoding: u8,
         imm: E::PcOrImm,
         mem_imm: Operand,

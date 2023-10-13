@@ -175,17 +175,16 @@ pub struct VmState<
     E: VmEncodingMode<N> = EncodingModeProduction,
 > {
     pub local_state: VmLocalState<N, E>,
-    pub block_properties:  crate::block_properties::BlockProperties,
+    pub block_properties: crate::block_properties::BlockProperties,
     pub storage: S,
-    pub memory:  M,
-    pub event_sink:  EV,
+    pub memory: M,
+    pub event_sink: EV,
     pub precompiles_processor: PP,
-    pub decommittment_processor:  DP,
-    pub witness_tracer:  WT,
+    pub decommittment_processor: DP,
+    pub witness_tracer: WT,
 }
 
 impl<
-        'a,
         S: crate::abstractions::Storage,
         M: crate::abstractions::Memory,
         EV: crate::abstractions::EventSink,
@@ -194,7 +193,7 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState< S, M, EV, PP, DP, WT, N, E>
+    > VmState<S, M, EV, PP, DP, WT, N, E>
 {
     pub fn empty_state(
         storage: S,
@@ -203,7 +202,7 @@ impl<
         precompiles_processor: PP,
         decommittment_processor: DP,
         witness_tracer: WT,
-        block_properties:  crate::block_properties::BlockProperties,
+        block_properties: crate::block_properties::BlockProperties,
     ) -> Self {
         Self {
             local_state: VmLocalState::empty_state(),
