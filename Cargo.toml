@@ -10,9 +10,12 @@ resolver = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 num = { version = "0.4"}
-sha3 = "=0.10.6"
-sha2 = "=0.10.6"
-blake2 = "=0.10.6"
+
+# These dependencies are intentionally pinned to a git commit,
+# so that they don't block upgradeability of dependencies upstream.
+sha3 = { git = "https://github.com/RustCrypto/hashes.git", rev = "7a187e934c1f6c68e4b4e5cf37541b7a0d64d303" }
+sha2 = { git = "https://github.com/RustCrypto/hashes.git", rev = "1731ced4a116d61ba9dc6ee6d0f38fb8102e357a" }
+blake2 = { git = "https://github.com/RustCrypto/hashes.git", rev = "1f727ce37ff40fa0cce84eb8543a45bdd3ca4a4e" }
 k256 = { version = "0.11", features = ["arithmetic", "ecdsa"] }
 static_assertions = "1"
 zkevm_opcode_defs = { git = "https://github.com/matter-labs/era-zkevm_opcode_defs.git", branch = "v1.3.1" }
