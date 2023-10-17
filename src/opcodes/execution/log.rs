@@ -1,6 +1,5 @@
 use super::*;
 
-use zk_evm_abstractions::aux::Timestamp;
 use zk_evm_abstractions::queries::LogQuery;
 use zkevm_opcode_defs::{
     LogOpcode, Opcode, PrecompileCallABI, PrecompileCallInnerABI, FIRST_MESSAGE_FLAG_IDX,
