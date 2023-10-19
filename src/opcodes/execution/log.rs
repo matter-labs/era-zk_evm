@@ -68,6 +68,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             .get_current_stack()
             .ergs_remaining;
         let is_rollup = shard_id == 0;
+        let timestamp_for_log = vm_state.timestamp_for_first_decommit_or_precompile_read();
+        let tx_number_in_block = vm_state.local_state.tx_number_in_block;
 
         let ergs_on_pubdata = match inner_variant {
             LogOpcode::StorageWrite => {
@@ -83,8 +85,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 // for oracle to do estimations
 
                 let partial_query = LogQuery {
-                    timestamp: Timestamp(0u32),
-                    tx_number_in_block: 0u16,
+                    timestamp: timestamp_for_log,
+                    tx_number_in_block,
                     aux_byte: STORAGE_AUX_BYTE,
                     shard_id,
                     address,
@@ -156,8 +158,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         let address = current_context.this_address;
         let shard_id = current_context.this_shard_id;
         drop(current_context);
-        let tx_number_in_block = vm_state.local_state.tx_number_in_block;
-        let timestamp_for_log = vm_state.timestamp_for_first_decommit_or_precompile_read();
         match inner_variant {
             LogOpcode::StorageRead => {
                 assert!(not_enough_power == false);
