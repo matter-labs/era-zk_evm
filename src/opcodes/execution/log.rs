@@ -1,6 +1,5 @@
 use super::*;
 
-use zk_evm_abstractions::aux::Timestamp;
 use zk_evm_abstractions::queries::LogQuery;
 use zkevm_opcode_defs::{LogOpcode, Opcode, PrecompileCallABI, FIRST_MESSAGE_FLAG_IDX};
 
@@ -10,7 +9,6 @@ use zkevm_opcode_defs::system_params::{
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn log_opcode_apply<
-        'a,
         S: zk_evm_abstractions::vm::Storage,
         M: zk_evm_abstractions::vm::Memory,
         EV: zk_evm_abstractions::vm::EventSink,
@@ -19,7 +17,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
-        vm_state: &mut VmState<'a, S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &mut VmState<S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) {
         let PreState {
@@ -66,6 +64,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             .ergs_remaining;
         let is_rollup = shard_id == 0;
 
+        let timestamp_for_log = vm_state.timestamp_for_first_decommit_or_precompile_read();
+        let tx_number_in_block = vm_state.local_state.tx_number_in_block;
+
         let ergs_on_pubdata = match inner_variant {
             LogOpcode::StorageWrite => {
                 let key = src0;
@@ -82,8 +83,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 // for oracle to do estimations
 
                 let partial_query = LogQuery {
-                    timestamp: Timestamp(0u32),
-                    tx_number_in_block: 0u16,
+                    timestamp: timestamp_for_log,
+                    tx_number_in_block: tx_number_in_block,
                     aux_byte: STORAGE_AUX_BYTE,
                     shard_id,
                     address,
@@ -158,8 +159,6 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         #[allow(dropping_references)]
         drop(current_context);
 
-        let tx_number_in_block = vm_state.local_state.tx_number_in_block;
-        let timestamp_for_log = vm_state.timestamp_for_first_decommit_or_precompile_read();
         match inner_variant {
             LogOpcode::StorageRead => {
                 assert!(not_enough_power == false);

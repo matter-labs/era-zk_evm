@@ -40,7 +40,6 @@ pub fn read_code<
 }
 
 impl<
-        'a,
         S: zk_evm_abstractions::vm::Storage,
         M: zk_evm_abstractions::vm::Memory,
         EV: zk_evm_abstractions::vm::EventSink,
@@ -49,7 +48,7 @@ impl<
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
         const N: usize,
         E: VmEncodingMode<N>,
-    > VmState<'a, S, M, EV, PP, DP, WT, N, E>
+    > VmState<S, M, EV, PP, DP, WT, N, E>
 {
     pub fn read_memory(&mut self, monotonic_cycle_counter: u32, key: MemoryKey) -> MemoryQuery {
         let MemoryKey {
@@ -78,8 +77,8 @@ impl<
 
     pub fn read_code(&mut self, monotonic_cycle_counter: u32, key: MemoryKey) -> MemoryQuery {
         read_code(
-            self.memory,
-            self.witness_tracer,
+            &mut self.memory,
+            &mut self.witness_tracer,
             monotonic_cycle_counter,
             key,
         )
@@ -180,7 +179,7 @@ impl<
         let (query, witness_for_tracer) = self.decommittment_processor.decommit_into_memory(
             monotonic_cycle_counter,
             partial_query,
-            self.memory,
+            &mut self.memory,
         )?;
 
         if let Some(witness_for_tracer) = witness_for_tracer {
@@ -211,7 +210,7 @@ impl<
         // add execution aux data
         if let Some((mem_in, mem_out, round_witness)) = self
             .precompiles_processor
-            .execute_precompile::<_>(monotonic_cycle_counter, query, self.memory)
+            .execute_precompile::<_>(monotonic_cycle_counter, query, &mut self.memory)
         {
             self.witness_tracer.add_precompile_call_result(
                 monotonic_cycle_counter,
