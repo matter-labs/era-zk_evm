@@ -12,7 +12,6 @@ use zkevm_opcode_defs::Operand;
 
 impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
     pub fn compute_addresses_and_select_operands<
-        'a,
         S: zk_evm_abstractions::vm::Storage,
         M: zk_evm_abstractions::vm::Memory,
         EV: zk_evm_abstractions::vm::EventSink,
@@ -21,7 +20,7 @@ impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &mut self,
-        vm_state: &VmState<'a, S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &VmState<S, M, EV, PP, DP, WT, N, E>,
         register_index_encoding: u8,
         imm: E::PcOrImm,
         mem_imm: Operand,
@@ -54,6 +53,8 @@ impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
                 let current_sp = self.sp;
                 // now we also have to decide on case of push or pop, to have push not to overflow 2^16, and pop not to underflow
                 if is_write {
+                    // a generalized version of 'push'
+                    let old_sp = current_sp;
                     let new_sp = current_sp.wrapping_add(vaddr);
                     self.sp = new_sp;
 
@@ -63,11 +64,12 @@ impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
                     let location = MemoryLocation {
                         memory_type: MemoryType::Stack,
                         page: stack_page,
-                        index: MemoryIndex(new_sp.as_u64() as u32),
+                        index: MemoryIndex(old_sp.as_u64() as u32),
                     };
 
                     Some(location)
                 } else {
+                    // a generalized version of 'pop'
                     let new_sp = current_sp.wrapping_sub(vaddr);
                     self.sp = new_sp;
 

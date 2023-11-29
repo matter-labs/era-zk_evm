@@ -7,7 +7,6 @@ use zkevm_opcode_defs::{FatPointer, Opcode, RetABI, RetForwardPageType, RetOpcod
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn ret_opcode_apply<
-        'a,
         S: zk_evm_abstractions::vm::Storage,
         M: zk_evm_abstractions::vm::Memory,
         EV: zk_evm_abstractions::vm::EventSink,
@@ -16,7 +15,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         WT: crate::witness_trace::VmWitnessTracer<N, E>,
     >(
         &self,
-        vm_state: &mut VmState<'a, S, M, EV, PP, DP, WT, N, E>,
+        vm_state: &mut VmState<S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) {
         let PreState { src0, .. } = prestate;
@@ -28,9 +27,18 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         vm_state.local_state.flags.reset();
 
         let PrimitiveValue {
-            value: src0,
-            is_pointer: src0_is_ptr,
+            value: mut src0,
+            is_pointer: mut src0_is_ptr,
         } = src0;
+
+        // on panic, we should never return any data. in this case, zero out src0 data
+        match inner_variant {
+            RetOpcode::Panic => {
+                src0 = U256::default();
+                src0_is_ptr = false;
+            }
+            _ => {}
+        }
 
         let ret_abi = RetABI::from_u256(src0);
 
@@ -128,9 +136,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                         }
                     }
                 }
-                RetOpcode::Panic => {
-                    memory_quasi_fat_pointer = FatPointer::empty();
-                }
+                // data should be zeroed out for panic case, both for caller case and malformed
+                // pointer case
+                _ => {}
             }
 
             // potentially pay for memory growth
@@ -240,6 +248,14 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             next_context.pc = finished_callstack.exception_handler_location;
         } else {
             // just use a saved value
+        }
+
+        // grow memory on near call
+        if finished_callstack.is_local_frame == true {
+            assert!(finished_callstack.heap_bound >= next_context.heap_bound);
+            assert!(finished_callstack.aux_heap_bound >= next_context.aux_heap_bound);
+            next_context.heap_bound = finished_callstack.heap_bound;
+            next_context.aux_heap_bound = finished_callstack.aux_heap_bound;
         }
 
         // and set flag on panic
