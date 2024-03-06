@@ -32,8 +32,8 @@ impl<const N: usize, E: VmEncodingMode<N>> std::fmt::Debug for DecodedOpcode<N, 
     }
 }
 
-use zkevm_opcode_defs::decoding::encoding_mode_production::EncodingModeProduction;
-use zkevm_opcode_defs::decoding::VmEncodingMode;
+use crate::zkevm_opcode_defs::decoding::encoding_mode_production::EncodingModeProduction;
+use crate::zkevm_opcode_defs::decoding::VmEncodingMode;
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn mask_into_panic(&mut self) {
@@ -56,7 +56,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         vm_state: &mut VmState<S, M, EV, PP, DP, WT, N, E>,
         prestate: PreState<N, E>,
     ) -> anyhow::Result<()> {
-        use zkevm_opcode_defs::Opcode;
+        use crate::zkevm_opcode_defs::Opcode;
 
         Ok(match self.inner.variant.opcode {
             Opcode::Nop(_) => self.noop_opcode_apply(vm_state, prestate),
@@ -69,7 +69,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             Opcode::Shift(_) => self.shift_opcode_apply(vm_state, prestate),
             Opcode::Binop(_) => self.binop_opcode_apply(vm_state, prestate),
             Opcode::Ptr(_) => self.ptr_opcode_apply(vm_state, prestate),
-            Opcode::Log(_) => self.log_opcode_apply(vm_state, prestate),
+            Opcode::Log(_) => self.log_opcode_apply(vm_state, prestate)?,
             Opcode::NearCall(_) => self.near_call_opcode_apply(vm_state, prestate),
             Opcode::FarCall(_) => self.far_call_opcode_apply(vm_state, prestate)?,
             Opcode::Ret(_) => self.ret_opcode_apply(vm_state, prestate),

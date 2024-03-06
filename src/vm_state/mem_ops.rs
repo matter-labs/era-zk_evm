@@ -2,13 +2,13 @@ use super::*;
 use zk_evm_abstractions::aux::{MemoryIndex, MemoryLocation};
 use zk_evm_abstractions::vm::MemoryType;
 
-use zkevm_opcode_defs::{ImmMemHandlerFlags, RegOrImmFlags};
+use crate::zkevm_opcode_defs::{ImmMemHandlerFlags, RegOrImmFlags};
 
 pub struct MemOpsProcessor<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
     pub sp: E::PcOrImm,
 }
 
-use zkevm_opcode_defs::Operand;
+use crate::zkevm_opcode_defs::Operand;
 
 impl<const N: usize, E: VmEncodingMode<N>> MemOpsProcessor<N, E> {
     pub fn compute_addresses_and_select_operands<

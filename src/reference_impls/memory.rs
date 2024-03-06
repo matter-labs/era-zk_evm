@@ -3,12 +3,13 @@ use std::{collections::HashSet, hash::BuildHasher};
 
 use crate::vm_state::CallStackEntry;
 use crate::vm_state::PrimitiveValue;
+use crate::zkevm_opcode_defs::{FatPointer, BOOTLOADER_CALLDATA_PAGE};
 use zk_evm_abstractions::aux::{MemoryPage, Timestamp};
 use zk_evm_abstractions::queries::MemoryQuery;
 use zk_evm_abstractions::vm::{
     Memory, MemoryType, MAX_CODE_PAGE_SIZE_IN_WORDS, MAX_STACK_PAGE_SIZE_IN_WORDS,
 };
-use zkevm_opcode_defs::{FatPointer, BOOTLOADER_CALLDATA_PAGE};
+use zk_evm_abstractions::zkevm_opcode_defs::STATIC_MEMORY_PAGE;
 
 use super::*;
 
@@ -164,7 +165,7 @@ pub struct SimpleMemory<S: BuildHasher + Default = RandomState> {
     pub pages_with_extended_lifetime: HashMap<u32, Vec<U256>, S>,
     pub page_numbers_indirections: HashMap<u32, Indirection, S>,
     pub indirections_to_cleanup_on_return: Vec<HashSet<u32, S>>,
-
+    pub static_memory_page: Vec<U256>,
     // we do not need a pool for code pages as those are extended lifetime always
     pub heaps_pool: HeapPagesReusablePool,
     pub stacks_pool: StackPagesReusablePool,
@@ -220,6 +221,7 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
             pages_with_extended_lifetime: HashMap::with_capacity_and_hasher(64, S::default()),
             page_numbers_indirections: HashMap::with_capacity_and_hasher(64, S::default()),
             indirections_to_cleanup_on_return: Vec::with_capacity(1024),
+            static_memory_page: Vec::with_capacity(1024),
             heaps_pool: HeapPagesReusablePool::new_with_capacity(1 << 12),
             stacks_pool: StackPagesReusablePool::new_with_capacity(1 << 11),
         };
@@ -248,6 +250,7 @@ impl<S: BuildHasher + Default> SimpleMemory<S> {
             pages_with_extended_lifetime: HashMap::with_capacity_and_hasher(64, S::default()),
             page_numbers_indirections: HashMap::with_capacity_and_hasher(64, S::default()),
             indirections_to_cleanup_on_return: Vec::with_capacity(1024),
+            static_memory_page: Vec::with_capacity(1024),
             heaps_pool: HeapPagesReusablePool::new_with_capacity(2),
             stacks_pool: StackPagesReusablePool::new_with_capacity(2),
         };
@@ -436,6 +439,26 @@ impl Memory for SimpleMemory {
                     query.value_is_pointer = primitive.is_pointer;
                 }
             }
+            MemoryType::StaticMemory => {
+                assert_eq!(query.location.page.0, STATIC_MEMORY_PAGE);
+                assert!(query.value_is_pointer == false);
+                if query.rw_flag {
+                    // grow if needed
+                    resize_to_fit(
+                        &mut self.static_memory_page,
+                        query.location.index.0 as usize,
+                    );
+                    self.static_memory_page[query.location.index.0 as usize] = query.value;
+                } else {
+                    resize_to_fit(
+                        &mut self.static_memory_page,
+                        query.location.index.0 as usize,
+                    );
+                    let value = self.static_memory_page[query.location.index.0 as usize];
+                    query.value = value;
+                    query.value_is_pointer = false;
+                }
+            }
             a @ MemoryType::Heap | a @ MemoryType::AuxHeap => {
                 assert!(query.value_is_pointer == false);
                 if query.rw_flag {
@@ -577,7 +600,7 @@ impl Memory for SimpleMemory {
         calldata_fat_pointer: FatPointer,
         _timestamp: Timestamp,
     ) {
-        use zkevm_opcode_defs::decoding::EncodingModeProduction;
+        use crate::zkevm_opcode_defs::decoding::EncodingModeProduction;
 
         // we can prepare and preallocate, and then deallocate the number of pages that we want
         let stack_page =
@@ -660,10 +683,11 @@ impl Memory for SimpleMemory {
     fn finish_global_frame(
         &mut self,
         base_page: MemoryPage,
+        _this_address: Address,
         returndata_fat_pointer: FatPointer,
         _timestamp: Timestamp,
     ) {
-        use zkevm_opcode_defs::decoding::EncodingModeProduction;
+        use crate::zkevm_opcode_defs::decoding::EncodingModeProduction;
 
         // stack always goes out of scope
         let stack_page =

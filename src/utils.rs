@@ -1,7 +1,7 @@
 use crate::tracing::*;
+pub use crate::zkevm_opcode_defs::utils::*;
+use crate::zkevm_opcode_defs::{decoding::VmEncodingMode, ethereum_types::U256};
 use zk_evm_abstractions::vm::Memory;
-pub use zkevm_opcode_defs::utils::*;
-use zkevm_opcode_defs::{decoding::VmEncodingMode, ethereum_types::U256};
 
 use lazy_static::lazy_static;
 

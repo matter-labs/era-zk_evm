@@ -1,11 +1,11 @@
 use super::*;
 
+use crate::zkevm_opcode_defs::PrecompileCallABI;
 use zk_evm_abstractions::auxiliary::*;
 use zk_evm_abstractions::queries::MemoryQuery;
 use zk_evm_abstractions::vm::Memory;
 use zk_evm_abstractions::vm::MemoryType;
 use zk_evm_abstractions::vm::PrecompilesProcessor;
-use zkevm_opcode_defs::PrecompileCallABI;
 
 fn bytes_to_u256_words(input: Vec<u8>, unalignement: usize) -> Vec<U256> {
     let mut result = vec![];

@@ -2,10 +2,13 @@ use crate::opcodes::DecodedOpcode;
 
 use super::*;
 
-use zk_evm_abstractions::aux::{MemoryKey, MemoryLocation};
+use crate::zkevm_opcode_defs::UNMAPPED_PAGE;
+use zk_evm_abstractions::aux::{MemoryKey, MemoryLocation, PubdataCost};
 use zk_evm_abstractions::queries::{DecommittmentQuery, LogQuery, MemoryQuery};
-use zk_evm_abstractions::vm::RefundType;
-use zkevm_opcode_defs::UNMAPPED_PAGE;
+use zk_evm_abstractions::vm::StorageAccessRefund;
+use zk_evm_abstractions::zkevm_opcode_defs::{
+    VersionedHashHeader, VersionedHashNormalizedPreimage,
+};
 
 pub fn read_code<
     const N: usize,
@@ -116,15 +119,15 @@ impl<
         query
     }
 
+    #[track_caller]
     pub fn refund_for_partial_query(
         &mut self,
         monotonic_cycle_counter: u32,
         partial_query: &LogQuery,
-    ) -> RefundType {
-        assert!(partial_query.rw_flag == true);
+    ) -> StorageAccessRefund {
         let refund = self
             .storage
-            .estimate_refunds_for_write(monotonic_cycle_counter, partial_query);
+            .get_access_refund(monotonic_cycle_counter, partial_query);
 
         self.witness_tracer.record_refund_for_query(
             monotonic_cycle_counter,
@@ -135,10 +138,15 @@ impl<
         refund
     }
 
-    pub fn access_storage(&mut self, monotonic_cycle_counter: u32, query: LogQuery) -> LogQuery {
+    #[track_caller]
+    pub fn access_storage(
+        &mut self,
+        monotonic_cycle_counter: u32,
+        query: LogQuery,
+    ) -> (LogQuery, PubdataCost) {
         // we do not touch pendings here and set them in the opcode only
         // also storage should internally rollback when ret is performed
-        let mut query = self
+        let (mut query, pubdata_cost) = self
             .storage
             .execute_partial_query(monotonic_cycle_counter, query);
 
@@ -150,8 +158,13 @@ impl<
         // tracer takes care of proper placements in the double ended queue
         self.witness_tracer
             .add_log_query(monotonic_cycle_counter, query);
+        self.witness_tracer.record_pubdata_cost_for_query(
+            monotonic_cycle_counter,
+            query,
+            pubdata_cost,
+        );
 
-        query
+        (query, pubdata_cost)
     }
 
     pub fn emit_event(&mut self, monotonic_cycle_counter: u32, query: LogQuery) {
@@ -161,49 +174,73 @@ impl<
             .add_log_query(monotonic_cycle_counter, query);
     }
 
-    pub fn decommit(
+    #[track_caller]
+    pub fn prepare_to_decommit(
         &mut self,
         monotonic_cycle_counter: u32,
-        hash: U256,
+        header: VersionedHashHeader,
+        normalized_preimage: VersionedHashNormalizedPreimage,
         candidate_page: MemoryPage,
         timestamp: Timestamp,
     ) -> anyhow::Result<DecommittmentQuery> {
         let partial_query = DecommittmentQuery {
-            hash,
+            header,
+            normalized_preimage,
             timestamp,
             memory_page: candidate_page,
             decommitted_length: 0u16,
             is_fresh: false,
         };
 
-        let (query, witness_for_tracer) = self.decommittment_processor.decommit_into_memory(
+        let query = self
+            .decommittment_processor
+            .prepare_to_decommit(monotonic_cycle_counter, partial_query)?;
+
+        self.witness_tracer
+            .prepare_for_decommittment(monotonic_cycle_counter, query);
+
+        Ok(query)
+    }
+
+    #[track_caller]
+    pub fn execute_decommit(
+        &mut self,
+        monotonic_cycle_counter: u32,
+        query: DecommittmentQuery,
+    ) -> anyhow::Result<()> {
+        if query.is_fresh == false {
+            return Ok(());
+        }
+
+        let witness_for_tracer = self.decommittment_processor.decommit_into_memory(
             monotonic_cycle_counter,
-            partial_query,
+            query,
             &mut self.memory,
         )?;
 
         if let Some(witness_for_tracer) = witness_for_tracer {
-            self.witness_tracer.add_decommittment(
+            self.witness_tracer.execute_decommittment(
                 monotonic_cycle_counter,
                 query,
                 witness_for_tracer,
             );
         }
 
-        Ok(query)
+        Ok(())
     }
 
+    #[track_caller]
     pub fn call_precompile(&mut self, monotonic_cycle_counter: u32, query: LogQuery) {
-        debug_assert!(self
+        assert!(self
             .local_state
             .callstack
             .get_current_stack()
             .is_kernel_mode());
-        debug_assert_eq!(
+        assert_eq!(
             query.timestamp,
             self.timestamp_for_first_decommit_or_precompile_read()
         );
-        debug_assert_eq!(query.rw_flag, false);
+        assert_eq!(query.rw_flag, false);
         // add to witness
         self.witness_tracer
             .add_log_query(monotonic_cycle_counter, query);
@@ -245,6 +282,36 @@ impl<
         self.local_state.callstack.push_entry(context_entry);
     }
 
+    pub fn add_pubdata_cost(&mut self, pubdata_cost: PubdataCost) {
+        // Short logic descriptions:
+        // - when we add - we add to both global and local counters
+        // - when we start new frame - counter is zero
+        // - when frame ends with success we add to parent
+        // - when frame rollbacks we adjust global counter
+        let pubdata_already_spent = self
+            .local_state
+            .callstack
+            .get_current_stack()
+            .total_pubdata_spent
+            .0;
+        // we can neither overflow nor underflow
+        let (new_pubdata_already_spent, of) = pubdata_already_spent.overflowing_add(pubdata_cost.0);
+        assert!(of == false);
+
+        self.local_state
+            .callstack
+            .get_current_stack_mut()
+            .total_pubdata_spent = PubdataCost(new_pubdata_already_spent);
+
+        let (new_revert_counter, of) = self
+            .local_state
+            .pubdata_revert_counter
+            .0
+            .overflowing_add(pubdata_cost.0);
+        assert!(of == false);
+        self.local_state.pubdata_revert_counter = PubdataCost(new_revert_counter);
+    }
+
     pub fn finish_frame(
         &mut self,
         monotonic_cycle_counter: u32,
@@ -259,8 +326,52 @@ impl<
             .finish_execution_context(monotonic_cycle_counter, panicked);
 
         let old_frame = self.local_state.callstack.pop_entry();
+        // if we panicked then we should subtract all spent pubdata, and reduce the counter of rollbacks
+        let pubdata_spent_in_new_current_frame = self
+            .local_state
+            .callstack
+            .get_current_stack()
+            .total_pubdata_spent
+            .0;
+
+        // if we revert the frame then all it's pubdata changes must be erased,
+        // otherwise - added to the parent
+
+        // we can neither overflow nor underflow
+        let (new_pubdata_already_spent, of) = if panicked {
+            (pubdata_spent_in_new_current_frame, false)
+        } else {
+            pubdata_spent_in_new_current_frame.overflowing_add(old_frame.total_pubdata_spent.0)
+        };
+
+        assert!(of == false);
+
+        self.local_state
+            .callstack
+            .get_current_stack_mut()
+            .total_pubdata_spent = PubdataCost(new_pubdata_already_spent);
+
+        // same logic - if frame is reverted then it's spendings are "forgotten". In this case
+        // we need to subtract from global counter to balance it on panic, otherwise - do nothing
+        let (new_revert_counter, of) = if panicked {
+            self.local_state
+                .pubdata_revert_counter
+                .0
+                .overflowing_sub(old_frame.total_pubdata_spent.0)
+        } else {
+            // do nothing
+            (self.local_state.pubdata_revert_counter.0, false)
+        };
+        assert!(of == false);
+        self.local_state.pubdata_revert_counter = PubdataCost(new_revert_counter);
 
         old_frame
+    }
+
+    pub fn start_new_tx(&mut self) {
+        self.local_state.tx_number_in_block = self.local_state.tx_number_in_block.wrapping_add(1);
+        self.storage
+            .start_new_tx(Timestamp(self.local_state.timestamp));
     }
 
     pub fn perform_dst0_update(
@@ -338,8 +449,8 @@ impl<
     }
 }
 
-use zkevm_opcode_defs::bitflags::bitflags;
-use zkevm_opcode_defs::FatPointer;
+use crate::zkevm_opcode_defs::bitflags::bitflags;
+use crate::zkevm_opcode_defs::FatPointer;
 
 bitflags! {
     #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -349,5 +460,28 @@ bitflags! {
         const PRIVILAGED_ACCESS_NOT_FROM_KERNEL = 1u64 << 2;
         const WRITE_IN_STATIC_CONTEXT = 1u64 << 3;
         const CALLSTACK_IS_FULL = 1u64 << 4;
+    }
+}
+
+pub fn address_is_kernel(address: &Address) -> bool {
+    // address < 2^16
+    let address_bytes = address.as_fixed_bytes();
+    address_bytes[0..18].iter().all(|&el| el == 0u8)
+}
+
+pub fn get_stipend_and_extra_cost(address: &Address, is_system_call: bool) -> (u32, u32) {
+    let address_bytes = address.as_fixed_bytes();
+    let is_kernel = address_bytes[0..18].iter().all(|&el| el == 0u8);
+    if is_kernel {
+        if is_system_call {
+            let address = u16::from_be_bytes([address_bytes[18], address_bytes[19]]);
+            use crate::zkevm_opcode_defs::STIPENDS_AND_EXTRA_COSTS_TABLE;
+
+            STIPENDS_AND_EXTRA_COSTS_TABLE[address as usize]
+        } else {
+            (0, 0)
+        }
+    } else {
+        (0, 0)
     }
 }

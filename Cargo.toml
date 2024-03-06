@@ -1,6 +1,6 @@
 [package]
 name = "zk_evm"
-version = "1.4.1"
+version = "1.5.0"
 edition = "2021"
 authors = ["The Matter Labs Team <hello@matterlabs.dev>"]
 
@@ -12,8 +12,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 num = { version = "0.4"}
 static_assertions = "1"
-zkevm_opcode_defs = { git = "https://github.com/matter-labs/era-zkevm_opcode_defs.git", branch = "v1.4.1" }
-zk_evm_abstractions = { git = "https://github.com/matter-labs/era-zk_evm_abstractions.git", branch = "v1.4.1" }
+zk_evm_abstractions = { git = "https://github.com/matter-labs/era-zk_evm_abstractions.git", branch = "v1.5.0" }
+# zk_evm_abstractions = { path = "../era-zk_evm_abstractions" }
 lazy_static = "1.4"
 
 [dev-dependencies]

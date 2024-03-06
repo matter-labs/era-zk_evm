@@ -14,7 +14,10 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         prestate: PreState<N, E>,
     ) {
         let PreState {
-            new_pc: _, src0, ..
+            new_pc,
+            src0,
+            dst0_mem_location,
+            ..
         } = prestate;
         let PrimitiveValue {
             value: src0,
@@ -23,5 +26,16 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         // we use lowest 16 bits of src0 as a jump destination
         let dest_pc = E::PcOrImm::from_u64_clipped(src0.low_u64());
         vm_state.local_state.callstack.get_current_stack_mut().pc = dest_pc;
+        let result = U256::from(new_pc.as_u64());
+        let result = PrimitiveValue {
+            value: result,
+            is_pointer: false,
+        };
+        vm_state.perform_dst0_update(
+            vm_state.local_state.monotonic_cycle_counter,
+            result,
+            dst0_mem_location,
+            self,
+        );
     }
 }

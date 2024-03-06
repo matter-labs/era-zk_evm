@@ -29,7 +29,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             is_pointer: _,
         } = src1;
 
-        use zkevm_opcode_defs::SET_FLAGS_FLAG_IDX;
+        use crate::zkevm_opcode_defs::SET_FLAGS_FLAG_IDX;
         let set_flags = self.variant.flags[SET_FLAGS_FLAG_IDX];
         vm_state.local_state.callstack.get_current_stack_mut().pc = new_pc;
         if src1.is_zero() {

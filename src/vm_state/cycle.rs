@@ -1,9 +1,10 @@
 use super::*;
 
 use crate::opcodes::parsing::*;
+use crate::zkevm_opcode_defs::{ImmMemHandlerFlags, NopOpcode, Operand, RegOrImmFlags};
 use tracing::*;
+use zk_evm_abstractions::zkevm_opcode_defs::VersionedHashLen32;
 use zk_evm_abstractions::{aux::*, vm::MemoryType};
-use zkevm_opcode_defs::{ImmMemHandlerFlags, NopOpcode, Operand, RegOrImmFlags};
 
 pub struct PreState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
     pub src0: PrimitiveValue,
@@ -191,7 +192,7 @@ pub fn read_and_decode<
 
     // resolve condition once
     let resolved_condition = {
-        use zkevm_opcode_defs::Condition;
+        use crate::zkevm_opcode_defs::Condition;
         match partially_decoded.condition {
             Condition::Always => true,
             Condition::Gt => local_state.flags.greater_than_flag,
@@ -258,6 +259,29 @@ impl<
         &mut self,
         tracer: &mut DT,
     ) -> anyhow::Result<()> {
+        // for sanity - check that default AA code hash and EVM simulator code hash are well-formed
+        let mut buffer = [0u8; 32];
+        self.block_properties
+            .default_aa_code_hash
+            .to_big_endian(&mut buffer);
+        assert!(
+            zkevm_opcode_defs::definitions::versioned_hash::ContractCodeSha256Format::is_valid(
+                &buffer
+            ),
+            "default AA bytecode hash is malfored: {:?}",
+            &buffer,
+        );
+        self.block_properties
+            .evm_simulator_code_hash
+            .to_big_endian(&mut buffer);
+        assert!(
+            zkevm_opcode_defs::definitions::versioned_hash::ContractCodeSha256Format::is_valid(
+                &buffer
+            ),
+            "EVM simulator bytecode hash is malfored: {:?}",
+            &buffer,
+        );
+
         let (after_masking_decoded, delayed_changes, skip_cycle) = read_and_decode(
             &self.local_state,
             &mut self.memory,

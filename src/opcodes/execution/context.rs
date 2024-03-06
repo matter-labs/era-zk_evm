@@ -1,6 +1,6 @@
 use super::*;
 
-use zkevm_opcode_defs::{ContextOpcode, Opcode};
+use crate::zkevm_opcode_defs::{ContextOpcode, Opcode};
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn context_opcode_apply<
@@ -19,6 +19,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             src0,
             new_pc,
             dst0_mem_location,
+            is_kernel_mode,
             ..
         } = prestate;
         let PrimitiveValue {
@@ -38,14 +39,14 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             return;
         }
 
-        if inner_variant == ContextOpcode::SetErgsPerPubdataByte {
-            vm_state.local_state.current_ergs_per_pubdata_byte = src0.low_u32();
+        if inner_variant == ContextOpcode::AuxMutating0 {
+            // does nothing for now
+            // vm_state.local_state.current_ergs_per_pubdata_byte = src0.low_u32();
             return;
         }
 
         if inner_variant == ContextOpcode::IncrementTxNumber {
-            vm_state.local_state.tx_number_in_block =
-                vm_state.local_state.tx_number_in_block.wrapping_add(1);
+            vm_state.start_new_tx();
             return;
         }
 
@@ -63,10 +64,15 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 address_to_u256(address)
             }
             ContextOpcode::Meta => {
-                use zkevm_opcode_defs::VmMetaParameters;
+                use crate::zkevm_opcode_defs::VmMetaParameters;
+                let aux_field_0 = if is_kernel_mode {
+                    vm_state.local_state.pubdata_revert_counter.0 as u32
+                } else {
+                    0u32
+                };
 
                 let meta = VmMetaParameters {
-                    ergs_per_pubdata_byte: vm_state.local_state.current_ergs_per_pubdata_byte,
+                    aux_field_0,
                     this_shard_id: current_context.this_shard_id,
                     caller_shard_id: current_context.caller_shard_id,
                     code_shard_id: current_context.code_shard_id,
@@ -84,13 +90,13 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
                 meta.to_u256()
             }
-            ContextOpcode::ErgsLeft => U256::from(current_context.ergs_remaining as u64),
+            ContextOpcode::ErgsLeft => U256::from((current_context.ergs_remaining / zkevm_opcode_defs::system_params::INTERNAL_ERGS_TO_VISIBLE_ERGS_CONVERSION_CONSTANT) as u64),
             ContextOpcode::Sp => U256::from(current_context.sp.as_u64()),
             ContextOpcode::GetContextU128 => U256::from(current_context.context_u128_value),
             ContextOpcode::SetContextU128 => {
                 unreachable!()
             }
-            ContextOpcode::SetErgsPerPubdataByte => {
+            ContextOpcode::AuxMutating0 => {
                 unreachable!()
             }
             ContextOpcode::IncrementTxNumber => {

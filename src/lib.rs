@@ -11,17 +11,16 @@ pub mod witness_trace;
 
 pub use self::utils::*;
 
-pub use zkevm_opcode_defs::{bitflags, ethereum_types};
+pub use crate::zkevm_opcode_defs::{bitflags, ethereum_types};
 
 use self::ethereum_types::{Address, U256};
 
-pub use zkevm_opcode_defs;
-
+pub use crate::zkevm_opcode_defs::blake2;
+pub use crate::zkevm_opcode_defs::k256;
+pub use crate::zkevm_opcode_defs::sha2;
+pub use crate::zkevm_opcode_defs::sha3;
 pub use zk_evm_abstractions;
-pub use zkevm_opcode_defs::blake2;
-pub use zkevm_opcode_defs::k256;
-pub use zkevm_opcode_defs::sha2;
-pub use zkevm_opcode_defs::sha3;
+pub use zk_evm_abstractions::zkevm_opcode_defs;
 
 // Re-export abstractions.
 pub mod abstractions {

@@ -1,4 +1,6 @@
-use zkevm_opcode_defs::NearCallABI;
+use zk_evm_abstractions::aux::PubdataCost;
+
+use crate::zkevm_opcode_defs::NearCallABI;
 
 use super::*;
 
@@ -26,7 +28,16 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         // proceed with call
         let dst = self.imm_0;
         let exception_handler_location = self.imm_1;
-        let near_call_abi = NearCallABI::from_u256(src0);
+        let mut near_call_abi = NearCallABI::from_u256(src0);
+        // convert ergs
+        near_call_abi.ergs_passed = if let Some(non_overflowing) =
+            near_call_abi.ergs_passed.checked_mul(
+                zkevm_opcode_defs::system_params::INTERNAL_ERGS_TO_VISIBLE_ERGS_CONVERSION_CONSTANT,
+            ) {
+            non_overflowing
+        } else {
+            u32::MAX
+        };
 
         // resolve passed ergs
         let pass_all_ergs = near_call_abi.ergs_passed == 0;
@@ -61,6 +72,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         new_stack.exception_handler_location = exception_handler_location;
         new_stack.ergs_remaining = passed_ergs;
         new_stack.is_local_frame = true;
+        new_stack.total_pubdata_spent = PubdataCost(0i32);
+        // we do not need to zero out stipend because it's only used on return from global frame
 
         // perform some extra steps to ensure that our rollbacks are properly written and saved
         // both in storage and for witness

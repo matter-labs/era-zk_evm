@@ -1,7 +1,7 @@
 use super::*;
 use crate::vm_state::*;
-use zkevm_opcode_defs::decoding::AllowedPcOrImm;
-use zkevm_opcode_defs::decoding::VmEncodingMode;
+use crate::zkevm_opcode_defs::decoding::AllowedPcOrImm;
+use crate::zkevm_opcode_defs::decoding::VmEncodingMode;
 
 pub mod add;
 pub mod binop;

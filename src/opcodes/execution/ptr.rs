@@ -1,6 +1,6 @@
 use super::*;
 
-use zkevm_opcode_defs::{FatPointer, Opcode, PtrOpcode};
+use crate::zkevm_opcode_defs::{FatPointer, Opcode, PtrOpcode};
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn ptr_opcode_apply<

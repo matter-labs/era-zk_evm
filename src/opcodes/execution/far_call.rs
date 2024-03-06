@@ -1,14 +1,14 @@
 use super::*;
 
+use crate::zkevm_opcode_defs::definitions::far_call::*;
+use crate::zkevm_opcode_defs::system_params::DEPLOYER_SYSTEM_CONTRACT_ADDRESS;
+use crate::zkevm_opcode_defs::system_params::STORAGE_AUX_BYTE;
+
+use crate::zkevm_opcode_defs::INITIAL_SP_ON_FAR_CALL;
 use zk_evm_abstractions::aux::*;
 use zk_evm_abstractions::queries::LogQuery;
-use zkevm_opcode_defs::definitions::far_call::*;
-use zkevm_opcode_defs::system_params::DEPLOYER_SYSTEM_CONTRACT_ADDRESS;
-use zkevm_opcode_defs::system_params::STORAGE_AUX_BYTE;
-use zkevm_opcode_defs::FatPointerValidationException;
-use zkevm_opcode_defs::{INITIAL_SP_ON_FAR_CALL, UNMAPPED_PAGE};
 
-use zkevm_opcode_defs::bitflags::bitflags;
+use crate::zkevm_opcode_defs::bitflags::bitflags;
 
 pub const FORCED_ERGS_FOR_MSG_VALUE_SIMULATOR: bool = false;
 
@@ -21,15 +21,12 @@ bitflags! {
         const MALFORMED_ABI_QUASI_POINTER = 1u64 << 4;
         const CALL_IN_NOW_CONSTRUCTED_SYSTEM_CONTRACT = 1u64 << 5;
         const NOT_ENOUGH_ERGS_FOR_EXTRA_FAR_CALL_COSTS = 1u64 << 6;
+        const CALL_TO_UNREACHABLE_ADDRESS = 1u64 << 7;
+        const INPUT_IS_POINTER_WHEN_NOT_EXPECTED = 1u64 << 8;
     }
 }
 
-use zkevm_opcode_defs::{FarCallABI, FarCallForwardPageType, FarCallOpcode, FatPointer, Opcode};
-
-// Internally FarCall uses all 7 sponges:
-// - 1 for decommittment
-// - 3 for storage read
-// - 3 for callstack manipulation
+use crate::zkevm_opcode_defs::{FarCallABI, FarCallOpcode, Opcode};
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn far_call_opcode_apply<
@@ -76,10 +73,20 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
         let called_address = u256_to_address_unchecked(&call_destination_value);
         let called_address_as_u256 = call_destination_value & *U256_TO_ADDRESS_MASK;
-        let dst_is_kernel = CallStackEntry::<N, E>::address_is_kernel(&called_address);
+        let dst_is_kernel = address_is_kernel(&called_address);
 
         // ergs, shard_id and calldata
         let mut far_call_abi = FarCallABI::from_u256(abi_src);
+
+        // convert ergs
+        far_call_abi.ergs_passed = if let Some(non_overflowing) =
+            far_call_abi.ergs_passed.checked_mul(
+                zkevm_opcode_defs::system_params::INTERNAL_ERGS_TO_VISIBLE_ERGS_CONVERSION_CONSTANT,
+            ) {
+            non_overflowing
+        } else {
+            u32::MAX
+        };
 
         // we ignore extra features if not in kernel
         far_call_abi.constructor_call = far_call_abi.constructor_call & is_kernel_mode;
@@ -117,10 +124,17 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
         let new_base_memory_page = vm_state.new_base_memory_page_on_call();
 
+        let call_to_evm_simulator;
+
         // NOTE: our far-call MUST take ergs to cover storage read, but we also have a contribution
         // that depends on the actual code length, so we work with it here
-        let (mapped_code_page, ergs_after_code_read_and_exceptions_resolution, stipend_for_callee) = {
-            let (code_hash, map_to_trivial) = if new_code_shard_id != 0
+        let (
+            mapped_code_page,
+            ergs_after_code_read_and_exceptions_resolution,
+            extra_ergs_from_caller_to_callee,
+            callee_stipend,
+        ) = {
+            let (code_hash, call_to_unreachable) = if new_code_shard_id != 0
                 && !vm_state.block_properties.zkporter_is_available
             {
                 // we do NOT mask it into default AA here
@@ -141,114 +155,150 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     rollback: false,
                     is_service: false,
                 };
-                let query = vm_state
+                let (query, _) = vm_state
                     .access_storage(vm_state.local_state.monotonic_cycle_counter, partial_query);
 
                 let code_hash_from_storage = query.read_value;
 
-                // mask for default AA
-                let mask_into_default_aa =
-                    code_hash_from_storage.is_zero() && dst_is_kernel == false;
-                let code_hash = if mask_into_default_aa {
-                    vm_state.block_properties.default_aa_code_hash
-                } else {
-                    code_hash_from_storage
-                };
-
-                (code_hash, false)
+                (code_hash_from_storage, false)
             };
 
-            let memory_page_candidate_for_code_decommittment = if map_to_trivial == true {
-                MemoryPage(UNMAPPED_PAGE)
-            } else {
-                CallStackEntry::<N, E>::code_page_candidate_from_base(new_base_memory_page)
-            };
+            let mut exceptions = FarCallExceptionFlags::empty();
+            if call_to_unreachable == true {
+                exceptions.set(FarCallExceptionFlags::CALL_TO_UNREACHABLE_ADDRESS, true);
+            }
 
             // now we handle potential exceptions
 
-            use zkevm_opcode_defs::{ContractCodeSha256, VersionedHashGeneric};
+            use crate::zkevm_opcode_defs::*;
+
+            let bytecode_hash_is_empty = code_hash == U256::zero();
 
             let mut buffer = [0u8; 32];
             code_hash.to_big_endian(&mut buffer);
 
-            let mut exceptions = FarCallExceptionFlags::empty();
+            let is_valid_as_bytecode_hash = ContractCodeSha256Format::is_valid(&buffer);
+            let is_valid_as_blob_hash = BlobSha256Format::is_valid(&buffer);
 
-            // now let's check if code format "makes sense"
-            let (code_hash, code_length_in_words) = if let Some(versioned_hash) =
-                VersionedHashGeneric::<ContractCodeSha256>::try_create_from_raw(buffer)
-            {
-                // code is in proper format, let's check other markers
+            let mut mask_to_default_aa = false;
 
-                let layout = versioned_hash.layout_ref();
+            let can_call_code_without_masking = if is_valid_as_bytecode_hash {
+                let is_code_at_rest = ContractCodeSha256Format::is_code_at_rest_if_valid(&buffer);
+                let is_constructed = ContractCodeSha256Format::is_in_construction_if_valid(&buffer);
 
-                let code_marker = layout.extra_marker;
+                let can_call_at_rest = !far_call_abi.constructor_call && is_code_at_rest;
+                let can_call_by_constructor = far_call_abi.constructor_call && is_constructed;
 
-                let code_marker_is_at_rest = code_marker == ContractCodeSha256::CODE_AT_REST_MARKER;
-                let code_marker_is_constructed_now =
-                    code_marker == ContractCodeSha256::YET_CONSTRUCTED_MARKER;
-
-                let code_marker_is_valid = code_marker_is_at_rest || code_marker_is_constructed_now;
-
-                if code_marker_is_valid == false {
-                    // code marker is generally invalid
-                    exceptions.set(FarCallExceptionFlags::INVALID_CODE_HASH_FORMAT, true);
-
-                    (U256::zero(), 0u32)
+                let can_call_code_without_masking = can_call_at_rest || can_call_by_constructor;
+                if can_call_code_without_masking == true {
+                    true
                 } else {
-                    // it's valid in general, so do the constructor masking work
-                    let code_hash_at_storage = versioned_hash
-                        .serialize_to_stored()
-                        .map(|arr| U256::from_big_endian(&arr))
-                        .expect("Failed to serialize a valid hash");
-
-                    let can_call_at_rest = !far_call_abi.constructor_call && code_marker_is_at_rest;
-                    let can_call_by_constructor =
-                        far_call_abi.constructor_call && code_marker_is_constructed_now;
-
-                    let can_call_code_without_masking = can_call_at_rest || can_call_by_constructor;
-                    if can_call_code_without_masking == true {
-                        // true values
-                        (code_hash_at_storage, layout.code_length_in_words as u32)
+                    // calling mode is unknown, so it's most likely a normal
+                    // call to contract that is still created
+                    if dst_is_kernel == false {
+                        mask_to_default_aa = true;
                     } else {
-                        // calling mode is unknown, so it's most likely a normal
-                        // call to contract that is still created
-                        if dst_is_kernel == false {
-                            // still degrade to default AA
-                            let mut buffer = [0u8; 32];
-                            vm_state
-                                .block_properties
-                                .default_aa_code_hash
-                                .to_big_endian(&mut buffer);
-                            let versioned_hash =
-                                VersionedHashGeneric::<ContractCodeSha256>::try_create_from_raw(
-                                    buffer,
-                                )
-                                .expect("default AA code hash must be always valid");
-                            let layout = versioned_hash.layout_ref();
-                            let code_marker = layout.extra_marker;
-                            assert!(
-                                code_marker == ContractCodeSha256::CODE_AT_REST_MARKER,
-                                "default AA marker is always in storage format"
-                            );
-
-                            (
-                                vm_state.block_properties.default_aa_code_hash,
-                                layout.code_length_in_words as u32,
-                            )
-                        } else {
-                            // we should not decommit 0, so it's an exception
-                            exceptions.set(
-                                FarCallExceptionFlags::CALL_IN_NOW_CONSTRUCTED_SYSTEM_CONTRACT,
-                                true,
-                            );
-                            (U256::zero(), 0u32)
-                        }
+                        exceptions.set(
+                            FarCallExceptionFlags::CALL_IN_NOW_CONSTRUCTED_SYSTEM_CONTRACT,
+                            true,
+                        );
                     }
+
+                    false
                 }
             } else {
+                false
+            };
+
+            let can_call_evm_simulator = if is_valid_as_blob_hash {
+                let is_code_at_rest = BlobSha256Format::is_code_at_rest_if_valid(&buffer);
+                let is_constructed = BlobSha256Format::is_in_construction_if_valid(&buffer);
+
+                let can_call_at_rest = !far_call_abi.constructor_call && is_code_at_rest;
+                let can_call_by_constructor = far_call_abi.constructor_call && is_constructed;
+
+                let can_call_code_without_masking = can_call_at_rest || can_call_by_constructor;
+                if can_call_code_without_masking == true {
+                    true
+                } else {
+                    // calling mode is unknown, so it's most likely a normal
+                    // call to contract that is still created
+                    if dst_is_kernel == false {
+                        mask_to_default_aa = true;
+                    } else {
+                        exceptions.set(FarCallExceptionFlags::INVALID_CODE_HASH_FORMAT, true);
+                    }
+
+                    false
+                }
+            } else {
+                false
+            };
+
+            call_to_evm_simulator = can_call_evm_simulator;
+
+            if bytecode_hash_is_empty {
+                if dst_is_kernel == false {
+                    mask_to_default_aa = true;
+                } else {
+                    exceptions.set(FarCallExceptionFlags::INVALID_CODE_HASH_FORMAT, true);
+                }
+            }
+
+            assert!(
+                (mask_to_default_aa as u64)
+                    + (can_call_evm_simulator as u64)
+                    + (can_call_code_without_masking as u64)
+                    < 2
+            );
+
+            let unknown_hash = mask_to_default_aa == false
+                && can_call_evm_simulator == false
+                && can_call_code_without_masking == false;
+            if unknown_hash {
                 exceptions.set(FarCallExceptionFlags::INVALID_CODE_HASH_FORMAT, true);
-                // we still return placeholders
-                (U256::zero(), 0u32)
+            }
+
+            // now let's check if code format "makes sense"
+            let (header, normalized_preimage, code_length_in_words) = {
+                if can_call_code_without_masking {
+                    // masking is not needed
+                } else if can_call_evm_simulator {
+                    // overwrite buffer with evm simulator bytecode hash
+                    vm_state
+                        .block_properties
+                        .evm_simulator_code_hash
+                        .to_big_endian(&mut buffer);
+                } else if mask_to_default_aa {
+                    // overwrite buffer with default AA code hash
+                    vm_state
+                        .block_properties
+                        .default_aa_code_hash
+                        .to_big_endian(&mut buffer);
+                } else {
+                    assert!(exceptions.is_empty() == false);
+                }
+
+                if exceptions.is_empty() {
+                    assert!(
+                        can_call_code_without_masking
+                            || can_call_evm_simulator
+                            || mask_to_default_aa
+                    );
+                    // true values
+                    let length_in_words =
+                        ContractCodeSha256Format::code_length_in_bytes32_words(&buffer);
+                    let (header, normalized_preimage) =
+                        ContractCodeSha256Format::normalize_for_decommitment(&buffer);
+
+                    (header, normalized_preimage, length_in_words)
+                } else {
+                    (
+                        VersionedHashHeader::default(),
+                        VersionedHashNormalizedPreimage::default(),
+                        0u16,
+                    )
+                }
             };
 
             // we also use code hash as an exception hatch here
@@ -256,6 +306,15 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 if abi_src_is_ptr == false {
                     exceptions.set(
                         FarCallExceptionFlags::INPUT_IS_NOT_POINTER_WHEN_EXPECTED,
+                        true,
+                    );
+                }
+            } else {
+                if abi_src_is_ptr {
+                    // there is no reasonable case to try to re-interpret pointer
+                    // as integer here
+                    exceptions.set(
+                        FarCallExceptionFlags::INPUT_IS_POINTER_WHEN_NOT_EXPECTED,
                         true,
                     );
                 }
@@ -384,81 +443,88 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 0
             };
 
-            let mut msg_value_stipend = if FORCED_ERGS_FOR_MSG_VALUE_SIMULATOR == false {
-                0
-            } else {
-                if called_address_as_u256 == U256::from(zkevm_opcode_defs::ADDRESS_MSG_VALUE as u64)
-                    && far_call_abi.to_system
-                {
-                    // use that doesn't know what's doing is trying to call "transfer"
+            let (mut callee_stipend, mut extra_ergs_from_caller_to_callee) =
+                get_stipend_and_extra_cost(&called_address, far_call_abi.to_system);
 
-                    let pubdata_related = vm_state.local_state.current_ergs_per_pubdata_byte.checked_mul(
-                            zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_PUBDATA_BYTES_TO_PREPAY
-                        ).expect("must fit into u32");
-                    pubdata_related
-                        .checked_add(
-                            zkevm_opcode_defs::system_params::MSG_VALUE_SIMULATOR_ADDITIVE_COST,
-                        )
-                        .expect("must not overflow")
+            let remaining_ergs_of_caller_frame =
+                if remaining_ergs_after_growth >= extra_ergs_from_caller_to_callee {
+                    remaining_ergs_after_growth - extra_ergs_from_caller_to_callee
                 } else {
+                    exceptions.set(
+                        FarCallExceptionFlags::NOT_ENOUGH_ERGS_FOR_EXTRA_FAR_CALL_COSTS,
+                        true,
+                    );
+                    // if tried to take and failed, but should not add it later on in this case
+                    extra_ergs_from_caller_to_callee = 0;
+
                     0
-                }
-            };
-
-            let remaining_ergs_of_caller_frame = if remaining_ergs_after_growth >= msg_value_stipend
-            {
-                remaining_ergs_after_growth - msg_value_stipend
-            } else {
-                exceptions.set(
-                    FarCallExceptionFlags::NOT_ENOUGH_ERGS_FOR_EXTRA_FAR_CALL_COSTS,
-                    true,
-                );
-                // if tried to take and failed, but should not add it later on in this case
-                msg_value_stipend = 0;
-
-                0
-            };
-
-            // we mask instead of branching
-            let cost_of_decommittment =
-                zkevm_opcode_defs::ERGS_PER_CODE_WORD_DECOMMITTMENT * code_length_in_words;
-
-            let mut remaining_ergs_after_decommittment =
-                if remaining_ergs_of_caller_frame >= cost_of_decommittment {
-                    remaining_ergs_of_caller_frame - cost_of_decommittment
-                } else {
-                    exceptions.set(FarCallExceptionFlags::NOT_ENOUGH_ERGS_TO_DECOMMIT, true);
-
-                    remaining_ergs_of_caller_frame // do not burn, as it's irrelevant - we just will not perform a decommittment and call
                 };
 
-            let code_memory_page = if exceptions.is_empty() == false {
+            if can_call_evm_simulator {
+                assert_eq!(callee_stipend, 0);
+                callee_stipend = zkevm_opcode_defs::system_params::EVM_SIMULATOR_STIPEND;
+            }
+
+            let (code_memory_page, remaining_ergs_after_decommittment) = if exceptions.is_empty()
+                == false
+            {
                 vm_state.set_shorthand_panic();
 
-                // we also do not return back cost of decommittment as it wasn't subtracted
-                MemoryPage(UNMAPPED_PAGE)
+                // we also do not return back cost of decommittment as it was subtracted
+                (MemoryPage(UNMAPPED_PAGE), remaining_ergs_of_caller_frame)
             } else {
+                assert!(normalized_preimage.0 != [0u8; 28], "original buffer {:?} lead to zero normalized preimage, but didn't trigger exception", buffer);
+
+                // we mask instead of branching
+                let default_cost_of_decommittment =
+                    zkevm_opcode_defs::ERGS_PER_CODE_WORD_DECOMMITTMENT
+                        * (code_length_in_words as u32);
+                // prepare query
                 let timestamp_for_decommit =
                     vm_state.timestamp_for_first_decommit_or_precompile_read();
-                let processed_decommittment_query = vm_state.decommit(
+                let memory_page_candidate_for_code_decommittment =
+                    CallStackEntry::<N, E>::code_page_candidate_from_base(new_base_memory_page);
+                let prepared_decommmit_query = vm_state.prepare_to_decommit(
                     vm_state.local_state.monotonic_cycle_counter,
-                    code_hash,
+                    header,
+                    normalized_preimage,
                     memory_page_candidate_for_code_decommittment,
                     timestamp_for_decommit,
                 )?;
+                let cost_of_decommittment = if prepared_decommmit_query.is_fresh {
+                    default_cost_of_decommittment
+                } else {
+                    0
+                };
 
-                if processed_decommittment_query.is_fresh == false {
-                    // refund
-                    remaining_ergs_after_decommittment += cost_of_decommittment;
-                }
+                let remaining_ergs_after_decommittment =
+                    if remaining_ergs_of_caller_frame >= cost_of_decommittment {
+                        remaining_ergs_of_caller_frame - cost_of_decommittment
+                    } else {
+                        exceptions.set(FarCallExceptionFlags::NOT_ENOUGH_ERGS_TO_DECOMMIT, true);
+                        remaining_ergs_of_caller_frame // do not burn, as it's irrelevant - we just will not perform a decommittment and call
+                    };
 
-                processed_decommittment_query.memory_page
+                let memory_page = if exceptions.is_empty() {
+                    vm_state.execute_decommit(
+                        vm_state.local_state.monotonic_cycle_counter,
+                        prepared_decommmit_query,
+                    )?;
+
+                    prepared_decommmit_query.memory_page
+                } else {
+                    vm_state.set_shorthand_panic();
+                    MemoryPage(UNMAPPED_PAGE)
+                };
+
+                (memory_page, remaining_ergs_after_decommittment)
             };
 
             (
                 code_memory_page,
                 remaining_ergs_after_decommittment,
-                msg_value_stipend,
+                extra_ergs_from_caller_to_callee,
+                callee_stipend,
             )
         };
 
@@ -484,7 +550,11 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         };
 
         // can not overflow
-        let passed_ergs = passed_ergs.wrapping_add(stipend_for_callee);
+        let passed_ergs = passed_ergs.wrapping_add(extra_ergs_from_caller_to_callee);
+        // this one is checked
+        let passed_ergs = passed_ergs
+            .checked_add(callee_stipend)
+            .expect("stipends must never overflow");
 
         // update current ergs and PC
         vm_state
@@ -534,6 +604,18 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             }
         };
 
+        let is_static_to_set = if call_to_evm_simulator {
+            false
+        } else {
+            new_context_is_static
+        };
+
+        let memory_stipend = if dst_is_kernel {
+            zkevm_opcode_defs::system_params::NEW_KERNEL_FRAME_MEMORY_STIPEND
+        } else {
+            zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND
+        };
+
         let new_stack = CallStackEntry {
             this_address: address_for_next,
             msg_sender: msg_sender_for_next,
@@ -547,11 +629,13 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
             this_shard_id: new_this_shard_id,
             caller_shard_id,
             code_shard_id: new_code_shard_id,
-            is_static: new_context_is_static,
+            is_static: is_static_to_set,
             is_local_frame: false,
             context_u128_value: context_u128_for_next,
-            heap_bound: zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
-            aux_heap_bound: zkevm_opcode_defs::system_params::NEW_FRAME_MEMORY_STIPEND,
+            heap_bound: memory_stipend,
+            aux_heap_bound: memory_stipend,
+            total_pubdata_spent: PubdataCost(0i32),
+            stipend: callee_stipend,
         };
 
         // zero out the temporary register if it was not trivial
@@ -582,6 +666,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         }
         if far_call_abi.to_system {
             r2_value.0[0] |= 1u64 << 1;
+        }
+        if call_to_evm_simulator {
+            r2_value.0[0] |= (new_context_is_static as u64) << 2;
         }
 
         vm_state.local_state.registers[CALL_IMPLICIT_CONSTRUCTOR_MARKER_REGISTER as usize] =

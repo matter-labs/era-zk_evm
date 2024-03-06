@@ -1,8 +1,9 @@
+use crate::zkevm_opcode_defs::decoding::VmEncodingMode;
 use zk_evm_abstractions::{
+    aux::PubdataCost,
     queries::{DecommittmentQuery, LogQuery, MemoryQuery},
-    vm::{PrecompileCyclesWitness, RefundType},
+    vm::{PrecompileCyclesWitness, StorageAccessRefund},
 };
-use zkevm_opcode_defs::decoding::VmEncodingMode;
 
 use super::*;
 use crate::vm_state::{CallStackEntry, VmLocalState};
@@ -23,7 +24,7 @@ pub trait VmWitnessTracer<const N: usize, E: VmEncodingMode<N>>: Clone + std::fm
         &mut self,
         monotonic_cycle_counter: u32,
         log_query: LogQuery,
-        refund: RefundType,
+        refund: StorageAccessRefund,
     ) {
     }
 
@@ -31,7 +32,24 @@ pub trait VmWitnessTracer<const N: usize, E: VmEncodingMode<N>>: Clone + std::fm
     fn add_log_query(&mut self, monotonic_cycle_counter: u32, log_query: LogQuery) {}
 
     #[inline]
-    fn add_decommittment(
+    fn record_pubdata_cost_for_query(
+        &mut self,
+        monotonic_cycle_counter: u32,
+        log_query: LogQuery,
+        pubdata_cost: PubdataCost,
+    ) {
+    }
+
+    #[inline]
+    fn prepare_for_decommittment(
+        &mut self,
+        monotonic_cycle_counter: u32,
+        decommittment_query: DecommittmentQuery,
+    ) {
+    }
+
+    #[inline]
+    fn execute_decommittment(
         &mut self,
         monotonic_cycle_counter: u32,
         decommittment_query: DecommittmentQuery,

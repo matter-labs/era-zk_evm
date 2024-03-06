@@ -1,12 +1,13 @@
 use zk_evm_abstractions::aux::*;
 use zk_evm_abstractions::vm::MemoryType;
+use zk_evm_abstractions::zkevm_opcode_defs::STATIC_MEMORY_PAGE;
 
 use super::*;
-use zkevm_opcode_defs::{FatPointer, Opcode, UMAOpcode, UMA_INCREMENT_FLAG_IDX};
+use crate::zkevm_opcode_defs::{FatPointer, Opcode, UMAOpcode, UMA_INCREMENT_FLAG_IDX};
 
 const U64_TOP_32_BITS_MASK: u64 = 0xffff_ffff_0000_0000;
 
-use zkevm_opcode_defs::bitflags::bitflags;
+use crate::zkevm_opcode_defs::bitflags::bitflags;
 
 bitflags! {
     pub struct UMAExceptionFlags: u64 {
@@ -105,6 +106,11 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                 MemoryType::AuxHeap
             }
             UMAOpcode::FatPointerRead => MemoryType::FatPointer,
+            UMAOpcode::StaticMemoryRead | UMAOpcode::StaticMemoryWrite => {
+                fat_ptr.memory_page = STATIC_MEMORY_PAGE;
+
+                MemoryType::StaticMemory
+            }
         };
 
         let src_offset = if is_ptr_read {
@@ -187,7 +193,9 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
                 diff
             }
-            UMAOpcode::FatPointerRead => {
+            UMAOpcode::FatPointerRead
+            | UMAOpcode::StaticMemoryRead
+            | UMAOpcode::StaticMemoryWrite => {
                 // cost was paid somewhere, and we if try to go out of bound we will just not read
                 0u32
             }
@@ -290,7 +298,8 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         match inner_variant {
             a @ UMAOpcode::HeapRead
             | a @ UMAOpcode::AuxHeapRead
-            | a @ UMAOpcode::FatPointerRead => {
+            | a @ UMAOpcode::FatPointerRead
+            | a @ UMAOpcode::StaticMemoryRead => {
                 // if we do "skip op", then we just write formal 0 into destination,
                 // but if "increment" failed, then we skip updates all together
 
@@ -346,7 +355,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     vm_state.set_shorthand_panic();
                 }
             }
-            UMAOpcode::HeapWrite | UMAOpcode::AuxHeapWrite => {
+            UMAOpcode::HeapWrite | UMAOpcode::AuxHeapWrite | UMAOpcode::StaticMemoryWrite => {
                 // we need to keep highest bytes of old word and place highest bytes of src1 into lowest
                 // cleanup lowest bytes
                 let mut new_word_0_value =

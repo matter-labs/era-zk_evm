@@ -1,9 +1,9 @@
 use super::*;
 
+use crate::zkevm_opcode_defs::definitions::ret::*;
+use crate::zkevm_opcode_defs::FatPointerValidationException;
+use crate::zkevm_opcode_defs::{FatPointer, Opcode, RetABI, RetForwardPageType, RetOpcode};
 use zk_evm_abstractions::aux::Timestamp;
-use zkevm_opcode_defs::definitions::ret::*;
-use zkevm_opcode_defs::FatPointerValidationException;
-use zkevm_opcode_defs::{FatPointer, Opcode, RetABI, RetForwardPageType, RetOpcode};
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn ret_opcode_apply<
@@ -69,7 +69,15 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
                     // - caller makes far call to some contract
                     // - callee does return-forward @calldataptr
                     // - caller modifies calldata corresponding heap region, that leads to modification of returndata
-                    // we require that returndata forwarding is unidirectional
+                    // we require that returndata forwarding is unidirectional if we are not in kernel
+                    if current_callstack.is_kernel_mode() == false {
+                        inner_variant = RetOpcode::Panic;
+                    }
+                }
+            } else {
+                if src0_is_ptr {
+                    // there is no reasonable case to try to re-interpret pointer
+                    // as integer here
                     inner_variant = RetOpcode::Panic;
                 }
             }
@@ -195,6 +203,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
         // done with exceptions, so we can pop the callstack entry
         let panicked = inner_variant == RetOpcode::Revert || inner_variant == RetOpcode::Panic;
 
+        // NOTE: this will also take care of the pubdata counters, same way as of rollback queues
         let finished_callstack =
             vm_state.finish_frame(vm_state.local_state.monotonic_cycle_counter, panicked);
 
@@ -206,6 +215,7 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
             vm_state.memory.finish_global_frame(
                 finished_callstack.base_memory_page,
+                finished_callstack.this_address,
                 returndata_fat_pointer,
                 Timestamp(vm_state.local_state.timestamp),
             );
@@ -234,6 +244,15 @@ impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
 
             // clean up context register
             vm_state.local_state.context_u128_register = 0u128;
+
+            // we also must reduce remaining ergs if there as a stipend
+            let (ergs_remaining_without_stipend, uf) =
+                ergs_remaining.overflowing_sub(finished_callstack.stipend);
+            if uf == false {
+                ergs_remaining = ergs_remaining_without_stipend;
+            } else {
+                ergs_remaining = 0;
+            }
         } else {
             debug_assert!(fat_ptr_for_returndata.is_none());
         }

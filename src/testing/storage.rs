@@ -1,5 +1,7 @@
-use zk_evm_abstractions::aux::Timestamp;
-use zk_evm_abstractions::vm::{RefundType, Storage};
+use crate::zkevm_opcode_defs::system_params::MAX_PUBDATA_COST_PER_QUERY;
+use zk_evm_abstractions::aux::{PubdataCost, Timestamp};
+use zk_evm_abstractions::vm::{Storage, StorageAccessRefund};
+use zk_evm_abstractions::zkevm_opcode_defs::system_params::STORAGE_AUX_BYTE;
 
 use super::ApplicationData;
 use super::*;
@@ -7,7 +9,9 @@ use super::*;
 #[derive(Debug, Clone)]
 pub struct InMemoryStorage {
     pub inner: [HashMap<Address, HashMap<U256, U256>>; NUM_SHARDS],
+    pub inner_transient: [HashMap<Address, HashMap<U256, U256>>; NUM_SHARDS],
     pub cold_warm_markers: [HashMap<Address, HashSet<U256>>; NUM_SHARDS],
+    pub transient_cold_warm_markers: [HashMap<Address, HashSet<U256>>; NUM_SHARDS], // not used
     pub frames_stack: Vec<ApplicationData<LogQuery>>,
 }
 
@@ -18,7 +22,9 @@ impl InMemoryStorage {
     pub fn new() -> Self {
         Self {
             inner: [(); NUM_SHARDS].map(|_| HashMap::default()),
+            inner_transient: [(); NUM_SHARDS].map(|_| HashMap::default()),
             cold_warm_markers: [(); NUM_SHARDS].map(|_| HashMap::default()),
+            transient_cold_warm_markers: [(); NUM_SHARDS].map(|_| HashMap::default()),
             frames_stack: vec![ApplicationData::empty()],
         }
     }
@@ -52,6 +58,9 @@ impl InMemoryStorage {
         // note that we only use "forward" part and discard the rollbacks at the end,
         // since if rollbacks of parents were not appended anywhere we just still keep them
         for el in forward.into_iter() {
+            if el.aux_byte != STORAGE_AUX_BYTE {
+                continue;
+            }
             let LogQuery {
                 timestamp,
                 shard_id,
@@ -77,21 +86,32 @@ impl InMemoryStorage {
 }
 
 impl Storage for InMemoryStorage {
-    fn estimate_refunds_for_write(
-        &mut self,
+    #[track_caller]
+    fn get_access_refund(
+        &mut self, // to avoid any hacks inside, like prefetch
         _monotonic_cycle_counter: u32,
         _partial_query: &LogQuery,
-    ) -> RefundType {
-        RefundType::None
+    ) -> StorageAccessRefund {
+        StorageAccessRefund::Cold
     }
 
+    #[track_caller]
     fn execute_partial_query(
         &mut self,
         _monotonic_cycle_counter: u32,
         mut query: LogQuery,
-    ) -> LogQuery {
-        let shard_level_map = &mut self.inner[query.shard_id as usize];
-        let shard_level_warm_map = &mut self.cold_warm_markers[query.shard_id as usize];
+    ) -> (LogQuery, PubdataCost) {
+        let aux_byte = query.aux_byte;
+        let shard_level_map = if aux_byte == STORAGE_AUX_BYTE {
+            &mut self.inner[query.shard_id as usize]
+        } else {
+            &mut self.inner_transient[query.shard_id as usize]
+        };
+        let shard_level_warm_map = if aux_byte == STORAGE_AUX_BYTE {
+            &mut self.cold_warm_markers[query.shard_id as usize]
+        } else {
+            &mut self.transient_cold_warm_markers[query.shard_id as usize]
+        };
         let frame_data = self.frames_stack.last_mut().expect("frame must be started");
 
         assert!(!query.rollback);
@@ -117,7 +137,13 @@ impl Storage for InMemoryStorage {
             frame_data.rollbacks.push(query);
             query.rollback = false;
 
-            query
+            let pubdata_cost = if aux_byte == STORAGE_AUX_BYTE {
+                PubdataCost(MAX_PUBDATA_COST_PER_QUERY)
+            } else {
+                PubdataCost(0i32)
+            };
+
+            (query, pubdata_cost)
         } else {
             // read, do not append to rollback
             let address_level_map = shard_level_map.entry(query.address).or_default();
@@ -134,13 +160,17 @@ impl Storage for InMemoryStorage {
             query.read_value = current_value;
             frame_data.forward.push(query);
 
-            query
+            (query, PubdataCost(0i32))
         }
     }
+
+    #[track_caller]
     fn start_frame(&mut self, _timestamp: Timestamp) {
         let new = ApplicationData::empty();
         self.frames_stack.push(new);
     }
+
+    #[track_caller]
     fn finish_frame(&mut self, _timestamp: Timestamp, panicked: bool) {
         // if we panic then we append forward and rollbacks to the forward of parent,
         // otherwise we place rollbacks of child before rollbacks of the parent
@@ -162,9 +192,14 @@ impl Storage for InMemoryStorage {
                     key,
                     read_value,
                     written_value,
+                    aux_byte,
                     ..
                 } = *query;
-                let shard_level_map = &mut self.inner[shard_id as usize];
+                let shard_level_map = if aux_byte == STORAGE_AUX_BYTE {
+                    &mut self.inner[shard_id as usize]
+                } else {
+                    &mut self.inner_transient[shard_id as usize]
+                };
                 let address_level_map = shard_level_map
                     .get_mut(&address)
                     .expect("must always exist on rollback");
@@ -182,6 +217,13 @@ impl Storage for InMemoryStorage {
             parent_data.forward.extend(forward);
             // we need to prepend rollbacks. No reverse here, as we do not care yet!
             parent_data.rollbacks.extend(rollbacks);
+        }
+    }
+
+    #[track_caller]
+    fn start_new_tx(&mut self, _: Timestamp) {
+        for transient in self.inner_transient.iter_mut() {
+            transient.clear();
         }
     }
 }

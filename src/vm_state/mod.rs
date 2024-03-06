@@ -1,12 +1,13 @@
-use zkevm_opcode_defs::decoding::encoding_mode_production::EncodingModeProduction;
-use zkevm_opcode_defs::decoding::VmEncodingMode;
-use zkevm_opcode_defs::ISAVersion;
+use crate::zkevm_opcode_defs::decoding::encoding_mode_production::EncodingModeProduction;
+use crate::zkevm_opcode_defs::decoding::VmEncodingMode;
+use crate::zkevm_opcode_defs::ISAVersion;
 
 use super::*;
 use crate::flags::Flags;
+use crate::zkevm_opcode_defs::decoding::AllowedPcOrImm;
 use zk_evm_abstractions::aux::MemoryPage;
+use zk_evm_abstractions::aux::PubdataCost;
 use zk_evm_abstractions::aux::Timestamp;
-use zkevm_opcode_defs::decoding::AllowedPcOrImm;
 
 pub mod cycle;
 pub mod execution_stack;
@@ -18,7 +19,7 @@ pub use self::execution_stack::*;
 pub use self::helpers::*;
 pub use self::mem_ops::*;
 
-pub const SUPPORTED_ISA_VERSION: ISAVersion = ISAVersion(1);
+pub const SUPPORTED_ISA_VERSION: ISAVersion = ISAVersion(2);
 
 const _: () = if SUPPORTED_ISA_VERSION.0 != zkevm_opcode_defs::DEFAULT_ISA_VERSION.0 {
     panic!()
@@ -26,7 +27,7 @@ const _: () = if SUPPORTED_ISA_VERSION.0 != zkevm_opcode_defs::DEFAULT_ISA_VERSI
     ()
 };
 
-use zkevm_opcode_defs::{STARTING_BASE_PAGE, STARTING_TIMESTAMP};
+use crate::zkevm_opcode_defs::{STARTING_BASE_PAGE, STARTING_TIMESTAMP};
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PrimitiveValue {
@@ -64,12 +65,13 @@ pub struct VmLocalState<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeP
     pub spent_pubdata_counter: u32,
     pub memory_page_counter: u32,
     pub absolute_execution_step: u32,
-    pub current_ergs_per_pubdata_byte: u32,
+    // pub current_ergs_per_pubdata_byte: u32,
     pub tx_number_in_block: u16,
     pub pending_exception: bool,
     pub previous_super_pc: E::PcOrImm,
     pub context_u128_register: u128,
     pub callstack: Callstack<N, E>,
+    pub pubdata_revert_counter: PubdataCost,
 }
 
 impl<const N: usize, E: VmEncodingMode<N>> VmLocalState<N, E> {
@@ -84,12 +86,13 @@ impl<const N: usize, E: VmEncodingMode<N>> VmLocalState<N, E> {
             spent_pubdata_counter: 0u32,
             memory_page_counter: STARTING_BASE_PAGE,
             absolute_execution_step: 0,
-            current_ergs_per_pubdata_byte: 0,
+            // current_ergs_per_pubdata_byte: 0,
             tx_number_in_block: 0,
             previous_super_pc: E::PcOrImm::from_u64_clipped(0),
             pending_exception: false,
             context_u128_register: 0u128,
             callstack: Callstack::empty(),
+            pubdata_revert_counter: PubdataCost(0i32),
         }
     }
 

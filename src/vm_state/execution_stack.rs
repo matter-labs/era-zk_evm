@@ -1,6 +1,6 @@
 use super::*;
 
-use zkevm_opcode_defs::{INITIAL_SP_ON_FAR_CALL, UNMAPPED_PAGE};
+use crate::zkevm_opcode_defs::{INITIAL_SP_ON_FAR_CALL, UNMAPPED_PAGE};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallStackEntry<const N: usize = 8, E: VmEncodingMode<N> = EncodingModeProduction> {
@@ -21,6 +21,8 @@ pub struct CallStackEntry<const N: usize = 8, E: VmEncodingMode<N> = EncodingMod
     pub context_u128_value: u128,
     pub heap_bound: u32,
     pub aux_heap_bound: u32,
+    pub total_pubdata_spent: PubdataCost,
+    pub stipend: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,10 +53,12 @@ impl<const N: usize, E: VmEncodingMode<N>> CallStackEntry<N, E> {
             context_u128_value: 0u128,
             heap_bound: 0u32,
             aux_heap_bound: 0u32,
+            total_pubdata_spent: PubdataCost(0i32),
+            stipend: 0u32,
         }
     }
     pub fn is_kernel_mode(&self) -> bool {
-        Self::address_is_kernel(&self.this_address)
+        address_is_kernel(&self.this_address)
     }
 
     pub const fn get_address_low(&self) -> u16 {
@@ -78,12 +82,6 @@ impl<const N: usize, E: VmEncodingMode<N>> CallStackEntry<N, E> {
 
     pub const fn aux_heap_page_from_base(base: MemoryPage) -> MemoryPage {
         MemoryPage(base.0 + 3)
-    }
-
-    pub fn address_is_kernel(address: &Address) -> bool {
-        // address < 2^16
-        let address_bytes = address.as_fixed_bytes();
-        address_bytes[0..18].iter().all(|&el| el == 0u8)
     }
 }
 

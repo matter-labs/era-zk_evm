@@ -1,5 +1,5 @@
+use crate::zkevm_opcode_defs::decoding::{EncodingModeProduction, VmEncodingMode};
 use zk_evm_abstractions::{aux::MemoryLocation, vm::Memory};
-use zkevm_opcode_defs::decoding::{EncodingModeProduction, VmEncodingMode};
 
 use crate::{
     opcodes::DecodedOpcode,
