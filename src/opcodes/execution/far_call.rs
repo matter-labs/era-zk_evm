@@ -25,6 +25,7 @@ bitflags! {
 }
 
 use crate::zkevm_opcode_defs::{FarCallABI, FarCallOpcode, Opcode};
+use crate::zkevm_opcode_defs::system_params::{DEPLOYER_SYSTEM_CONTRACT_ADDRESS, STORAGE_AUX_BYTE};
 
 impl<const N: usize, E: VmEncodingMode<N>> DecodedOpcode<N, E> {
     pub fn far_call_opcode_apply<
